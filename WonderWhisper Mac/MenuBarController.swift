@@ -39,6 +39,12 @@ final class MenuBarController {
         toggle.target = self
         menu.addItem(toggle)
 
+        let addDict = NSMenuItem(title: "Add to Dictionary", action: #selector(addClipboardToVocabulary), keyEquivalent: "")
+        addDict.target = self
+        let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        addDict.isEnabled = !clip.isEmpty
+        menu.addItem(addDict)
+
         menu.addItem(.separator())
 
         let inputMenu = NSMenuItem(title: "Input Device", action: nil, keyEquivalent: "")
@@ -78,6 +84,25 @@ final class MenuBarController {
         statusItem.menu = buildMenu()
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
+
+    @objc private func addClipboardToVocabulary() {
+        guard let vm = vm else { return }
+        guard var word = NSPasteboard.general.string(forType: .string) else { return }
+        word = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !word.isEmpty else { return }
+        // Split existing vocabulary by comma/newline, normalize and dedupe
+        let separators = CharacterSet(charactersIn: ",\n\r")
+        var items = vm.vocabCustom
+            .components(separatedBy: separators)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let lowered = Set(items.map { $0.lowercased() })
+        if !lowered.contains(word.lowercased()) {
+            items.append(word)
+            vm.vocabCustom = items.joined(separator: "\n")
+        }
+        statusItem.menu = buildMenu()
+    }
 
     private static func letterWImage(color: NSColor, size: NSSize = NSSize(width: 18, height: 16)) -> NSImage {
         let img = NSImage(size: size)
