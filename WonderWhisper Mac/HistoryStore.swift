@@ -4,6 +4,13 @@ import AppKit
 @MainActor
 final class HistoryStore: ObservableObject {
     @Published private(set) var entries: [HistoryEntry] = []
+    @Published var maxEntries: Int {
+        didSet {
+            if maxEntries < 1 { maxEntries = 1 }
+            UserDefaults.standard.set(maxEntries, forKey: Self.defaultsMaxKey)
+            enforceMaxEntries()
+        }
+    }
 
     private let baseDir: URL
     private let entriesDir: URL
@@ -19,7 +26,10 @@ final class HistoryStore: ObservableObject {
         self.audioDir = base.appendingPathComponent("audio", isDirectory: true)
         try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
         try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
+        let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
+        self.maxEntries = persisted ?? 100
         load()
+        enforceMaxEntries()
     }
 
     func load() {
@@ -87,6 +97,7 @@ final class HistoryStore: ObservableObject {
             // ignore persistence failure for now
         }
         entries.insert(entry, at: 0)
+        enforceMaxEntries()
     }
 
     func replace(id: UUID, with updated: HistoryEntry) async {
@@ -119,5 +130,32 @@ final class HistoryStore: ObservableObject {
         } else {
             NSWorkspace.shared.open(entriesDir)
         }
+    }
+}
+
+// MARK: - Private helpers
+private extension HistoryStore {
+    static let defaultsMaxKey = "history.maxEntries"
+
+    func enforceMaxEntries() {
+        guard entries.count > maxEntries else { return }
+        let fm = FileManager.default
+        // Entries are newest-first; remove oldest beyond maxEntries
+        let overflow = entries.count - maxEntries
+        guard overflow > 0 else { return }
+        let toRemove = Array(entries.suffix(overflow))
+        // Remove files from disk
+        for e in toRemove {
+            // JSON
+            let jsonURL = entriesDir.appendingPathComponent("\(e.id).json")
+            if fm.fileExists(atPath: jsonURL.path) { try? fm.removeItem(at: jsonURL) }
+            // Audio
+            if let name = e.audioFilename {
+                let aURL = audioDir.appendingPathComponent(name)
+                if fm.fileExists(atPath: aURL.path) { try? fm.removeItem(at: aURL) }
+            }
+        }
+        // Trim in memory
+        entries = Array(entries.prefix(maxEntries))
     }
 }

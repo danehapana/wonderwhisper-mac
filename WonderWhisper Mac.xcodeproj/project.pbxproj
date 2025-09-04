@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 0AE7404A2E69E7B2007001CC /* FluidAudio */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		0AE73FB82E6954E1007001CC /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0AE7404B2E69E7B2007001CC /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +83,7 @@
 				0AE73FAB2E6954E0007001CC /* WonderWhisper Mac */,
 				0AE73FBA2E6954E1007001CC /* WonderWhisper MacTests */,
 				0AE73FC42E6954E1007001CC /* WonderWhisper MacUITests */,
+				0AE740452E69E3E2007001CC /* Frameworks */,
 				0AE73FAA2E6954E0007001CC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +96,13 @@
 				0AE73FC12E6954E1007001CC /* WonderWhisper MacUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		0AE740452E69E3E2007001CC /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -112,6 +125,7 @@
 			);
 			name = "WonderWhisper Mac";
 			packageProductDependencies = (
+				0AE7404A2E69E7B2007001CC /* FluidAudio */,
 			);
 			productName = "WonderWhisper Mac";
 			productReference = 0AE73FA92E6954E0007001CC /* WonderWhisper Mac.app */;
@@ -567,6 +581,14 @@
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		0AE7404A2E69E7B2007001CC /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 0AE740422E69E14A007001CC /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 0AE73FA12E6954E0007001CC /* Project object */;
 }

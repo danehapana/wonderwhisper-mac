@@ -21,13 +21,15 @@ final class AudioRecorder: NSObject {
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
         ]
 
-        // If a specific input device was selected, try to switch system default temporarily
-        switch AudioInputSelection.load() {
-        case .systemDefault:
-            break
-        case .deviceUID(let uid):
-            previousDefaultInputUID = AudioDeviceManager.currentDefaultInputUID()
-            _ = AudioDeviceManager.setSystemDefaultInput(toUID: uid)
+        // If a specific input device was selected, optionally switch system default temporarily
+        if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
+            switch AudioInputSelection.load() {
+            case .systemDefault:
+                break
+            case .deviceUID(let uid):
+                previousDefaultInputUID = AudioDeviceManager.currentDefaultInputUID()
+                _ = AudioDeviceManager.setSystemDefaultInput(toUID: uid)
+            }
         }
 
         recorder = try AVAudioRecorder(url: url, settings: settings)
@@ -52,9 +54,11 @@ final class AudioRecorder: NSObject {
         isRecording = false
         stopLevelUpdates()
         // Restore previous default input device if we changed it
-        if let prev = previousDefaultInputUID {
-            _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
-            previousDefaultInputUID = nil
+        if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
+            if let prev = previousDefaultInputUID {
+                _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+                previousDefaultInputUID = nil
+            }
         }
         return recorder.url
     }

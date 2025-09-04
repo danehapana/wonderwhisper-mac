@@ -4,7 +4,7 @@ struct HistoryView: View {
     @ObservedObject var vm: DictationViewModel
     @EnvironmentObject var history: HistoryStore
     @State private var searchText: String = ""
-    @State private var selection: HistoryEntry?
+    @State private var selectionID: HistoryEntry.ID?
     @State private var isReprocessing: Bool = false
 
     var body: some View {
@@ -14,16 +14,25 @@ struct HistoryView: View {
             Divider()
             detailPane
         }
-        .onAppear { if selection == nil { selection = history.entries.first } }
+        .onAppear { if selectionID == nil { selectionID = filtered.first?.id } }
     }
 
     private var listPane: some View {
         VStack(spacing: 0) {
+            // Controls
+            HStack {
+                Text("Max entries").font(.caption)
+                Spacer()
+                Stepper("\(history.maxEntries)", value: $history.maxEntries, in: 10...500, step: 10)
+                    .labelsHidden()
+            }
+            .padding(.vertical, 6)
+
             if filtered.isEmpty {
                 ContentUnavailableView("No history yet", systemImage: "clock", description: Text("Start a dictation to see it here."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selection) {
+                List(selection: $selectionID) {
                     ForEach(filtered) { entry in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
@@ -37,6 +46,7 @@ struct HistoryView: View {
                                 .lineLimit(2)
                                 .font(.subheadline)
                         }
+                        .tag(entry.id)
                         .contextMenu {
                             Button("Copy Processed") { copy(entry.output.isEmpty ? entry.transcript : entry.output) }
                             Button("Copy Original") { copy(entry.transcript) }
@@ -53,7 +63,7 @@ struct HistoryView: View {
 
     private var detailPane: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if let e = selection {
+            if let e = selectedEntry {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(e.appName ?? "Unknown App").bold()
@@ -115,7 +125,7 @@ struct HistoryView: View {
                 }
                 HStack {
                     Button {
-                        guard !isReprocessing, let sel = selection else { return }
+                        guard !isReprocessing, let sel = selectedEntry else { return }
                         isReprocessing = true
                         Task {
                             await vm.reprocessHistoryEntry(sel)
@@ -150,5 +160,10 @@ struct HistoryView: View {
             (e.transcript.localizedCaseInsensitiveContains(q)) ||
             (e.output.localizedCaseInsensitiveContains(q))
         }
+    }
+
+    private var selectedEntry: HistoryEntry? {
+        guard let id = selectionID else { return nil }
+        return history.entries.first(where: { $0.id == id })
     }
 }

@@ -57,10 +57,18 @@ actor DictationController {
         guard state == .recording else { return }
         let maybeURL = recorder.stopRecording()
         guard let fileURL = maybeURL else { state = .error("No recording file"); return }
+        // Ensure the encoder has flushed the file before we read it for ASR
+        try? await Task.sleep(nanoseconds: 150_000_000)
 
         do {
             let overallStart = Date()
-            AppLog.dictation.log("Transcription start")
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path), let size = attrs[.size] as? NSNumber {
+            let providerType = String(describing: type(of: transcriber))
+            AppLog.dictation.log("Transcription start provider=\(providerType) file=\(fileURL.lastPathComponent) size=\(size.intValue)")
+            } else {
+                let providerType = String(describing: type(of: transcriber))
+                AppLog.dictation.log("Transcription start provider=\(providerType) file=\(fileURL.lastPathComponent)")
+            }
             state = .transcribing
             let t0 = Date()
             let transcript = try await transcriber.transcribe(fileURL: fileURL, settings: transcriberSettings)
@@ -113,7 +121,8 @@ actor DictationController {
                 totalSeconds: totalDT
             )
         } catch {
-            AppLog.dictation.error("Pipeline error: \(error.localizedDescription)")
+            let ns = error as NSError
+            AppLog.dictation.error("Pipeline error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
             state = .error(error.localizedDescription)
         }
     }
