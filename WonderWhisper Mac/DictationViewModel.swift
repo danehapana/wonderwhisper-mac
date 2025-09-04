@@ -92,8 +92,9 @@ final class DictationViewModel: ObservableObject {
                 guard let self = self else { return }
                 let s = await self.controllerState()
                 await MainActor.run {
-                    self.status = s
-                    self.isRecording = (s == "Recording")
+                    if self.status != s { self.status = s }
+                    let rec = (s == "Recording")
+                    if self.isRecording != rec { self.isRecording = rec }
                 }
             }
         }
