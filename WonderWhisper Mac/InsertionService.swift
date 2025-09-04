@@ -6,6 +6,13 @@ final class InsertionService {
     var useAXInsertion: Bool = false
 
     func insert(_ text: String) {
+        // Special-case: if our app is frontmost, insert directly into the first responder text view
+        if let bundleID = Bundle.main.bundleIdentifier,
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID,
+           insertIntoFirstResponder(text) {
+            AppLog.insertion.log("Direct insert into in-app first responder")
+            return
+        }
         // Strategy 1: AX direct insertion when enabled
         if useAXInsertion, setFocusedAXValue(text) {
             AppLog.insertion.log("AX insertion succeeded")
@@ -16,6 +23,17 @@ final class InsertionService {
         NSPasteboard.general.setString(text, forType: .string)
         AppLog.insertion.log("Fallback paste + Cmd+V")
         synthesizeCmdV()
+    }
+
+    private func insertIntoFirstResponder(_ text: String) -> Bool {
+        var success = false
+        DispatchQueue.main.sync {
+            if let responder = NSApp.keyWindow?.firstResponder as? NSTextView {
+                responder.insertText(text, replacementRange: responder.selectedRange())
+                success = true
+            }
+        }
+        return success
     }
 
     private func setFocusedAXValue(_ text: String) -> Bool {
@@ -41,4 +59,3 @@ final class InsertionService {
         keyUp?.post(tap: .cghidEventTap)
     }
 }
-
