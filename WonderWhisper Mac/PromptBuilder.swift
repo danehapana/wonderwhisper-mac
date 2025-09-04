@@ -28,7 +28,10 @@ struct PromptBuilder {
         var vocabItems: [String] = []
         let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedVocab.isEmpty {
-            let parts = trimmedVocab.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            let separators: Set<Character> = [",", "\n", "\r"]
+            let parts = trimmedVocab.split(whereSeparator: { separators.contains($0) })
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
             vocabItems.append(contentsOf: parts)
         }
         let trimmedSpelling = customSpelling.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,7 +61,7 @@ struct PromptBuilder {
     }
 
     // Mirrors Android TextProcessingUtils.buildStructuredUserMessage
-    static func buildUserMessage(transcription: String, focusedText: String?, appName: String?) -> String {
+    static func buildUserMessage(transcription: String, selectedText: String?, appName: String?, screenContents: String?) -> String {
         var out = ""
         out += "<TRANSCRIPT>\n"
         out += transcription
@@ -68,14 +71,12 @@ struct PromptBuilder {
         out += (appName?.isEmpty == false) ? (appName ?? "Unknown") : "Unknown"
         out += "\n</ACTIVE_APPLICATION>\n\n"
 
-        let screenContents = (focusedText ?? "")
         out += "<SCREEN_CONTENTS>\n"
-        out += screenContents
+        out += (screenContents ?? "")
         out += "\n</SCREEN_CONTENTS>\n\n"
 
-        // We do not have separate selected text on macOS; reuse focusedText
         out += "<SELECTED_TEXT>\n"
-        out += screenContents
+        out += (selectedText ?? "")
         out += "\n</SELECTED_TEXT>"
         return out
     }

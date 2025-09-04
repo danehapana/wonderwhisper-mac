@@ -18,6 +18,10 @@ final class HotkeyManager {
 
     var onActivate: (() -> Void)?
 
+    // Push-to-talk timing
+    private var hotkeyPressStart: Date?
+    private let briefPressThreshold: TimeInterval = 0.8
+
     // Settings
     var useFnGlobe: Bool = false { didSet { updateFnTap() } }
     var registeredShortcut: Shortcut? { didSet { registerCarbonHotkey() } }
@@ -29,13 +33,25 @@ final class HotkeyManager {
 
         // Install the event handler once
         if eventHandlerRef == nil {
-            var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            var specs: [EventTypeSpec] = [
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+            ]
             let callback: EventHandlerUPP = { (_, evtRef, userData) -> OSStatus in
                 let selfRef = Unmanaged<HotkeyManager>.fromOpaque(userData!).takeUnretainedValue()
-                selfRef.onActivate?()
+                let kind = GetEventKind(evtRef)
+                if kind == UInt32(kEventHotKeyPressed) {
+                    selfRef.handleHotkeyDown()
+                } else if kind == UInt32(kEventHotKeyReleased) {
+                    selfRef.handleHotkeyUp()
+                }
                 return noErr
             }
-            let status = InstallEventHandler(GetApplicationEventTarget(), callback, 1, &eventSpec, UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()), &eventHandlerRef)
+            let target = GetApplicationEventTarget()
+            let userPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+            let status: OSStatus = specs.withUnsafeBufferPointer { buf in
+                InstallEventHandler(target, callback, Int(buf.count), buf.baseAddress, userPtr, &eventHandlerRef)
+            }
             guard status == noErr else { return }
         }
 
@@ -72,10 +88,8 @@ final class HotkeyManager {
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
             let flags = event.flags
             let fnOn = flags.contains(.maskSecondaryFn)
-            if fnOn && !manager.lastFnFlagsOn {
-                // Fn pressed
-                manager.onActivate?()
-            }
+            if fnOn && !manager.lastFnFlagsOn { manager.handleHotkeyDown() }
+            if !fnOn && manager.lastFnFlagsOn { manager.handleHotkeyUp() }
             manager.lastFnFlagsOn = fnOn
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
@@ -103,6 +117,23 @@ final class HotkeyManager {
     }
 
     // MARK: - Helpers
+    private func handleHotkeyDown() {
+        hotkeyPressStart = Date()
+        onActivate?() // Start recording immediately or toggle if already recording
+    }
+
+    private func handleHotkeyUp() {
+        guard let start = hotkeyPressStart else { return }
+        hotkeyPressStart = nil
+        let duration = Date().timeIntervalSince(start)
+        if duration >= briefPressThreshold {
+            // Held long enough: push-to-talk ends on release
+            onActivate?()
+        } else {
+            // Short tap: hands-free mode (stay recording); next press will toggle stop
+        }
+    }
+
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
         var carbon: UInt32 = 0
         if flags.contains(.command) { carbon |= UInt32(cmdKey) }
@@ -120,4 +151,3 @@ final class HotkeyManager {
         }
     }
 }
-

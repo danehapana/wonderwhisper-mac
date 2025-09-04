@@ -69,8 +69,9 @@ actor DictationController {
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                let focused = screenContext.focusedText()
-                let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, focusedText: focused, appName: appName)
+                let selected = screenContext.selectedText()
+                let screenText = await screenContext.captureActiveWindowText()
+                let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
                 output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
@@ -96,4 +97,3 @@ actor DictationController {
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
 }
-

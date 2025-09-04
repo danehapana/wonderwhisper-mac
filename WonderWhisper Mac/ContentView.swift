@@ -13,6 +13,7 @@ private enum SidebarItem: Hashable, Identifiable {
     case settingsGeneral
     case settingsModels
     case settingsPrompts
+    case settingsVocabulary
     case settingsShortcuts
 
     var id: String {
@@ -22,6 +23,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsGeneral: return "settings.general"
         case .settingsModels: return "settings.models"
         case .settingsPrompts: return "settings.prompts"
+        case .settingsVocabulary: return "settings.vocabulary"
         case .settingsShortcuts: return "settings.shortcuts"
         }
     }
@@ -33,6 +35,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsGeneral: return "General"
         case .settingsModels: return "Models"
         case .settingsPrompts: return "Prompts"
+        case .settingsVocabulary: return "Vocabulary"
         case .settingsShortcuts: return "Shortcuts"
         }
     }
@@ -44,6 +47,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsGeneral: return "gear"
         case .settingsModels: return "brain.head.profile"
         case .settingsPrompts: return "text.justify.left"
+        case .settingsVocabulary: return "textformat.abc"
         case .settingsShortcuts: return "keyboard"
         }
     }
@@ -54,7 +58,7 @@ struct ContentView: View {
     @State private var selection: SidebarItem? = .home
 
     private let items: [SidebarItem] = [
-        .home, .history, .settingsGeneral, .settingsModels, .settingsPrompts, .settingsShortcuts
+        .home, .history, .settingsGeneral, .settingsModels, .settingsPrompts, .settingsVocabulary, .settingsShortcuts
     ]
 
     var body: some View {
@@ -67,7 +71,7 @@ struct ContentView: View {
                     }
                 }
                 Section("Settings") {
-                    ForEach([SidebarItem.settingsGeneral, SidebarItem.settingsModels, SidebarItem.settingsPrompts, SidebarItem.settingsShortcuts], id: \.self) { item in
+                    ForEach([SidebarItem.settingsGeneral, SidebarItem.settingsModels, SidebarItem.settingsPrompts, SidebarItem.settingsVocabulary, SidebarItem.settingsShortcuts], id: \.self) { item in
                         Label(item.title, systemImage: item.systemImage)
                             .tag(item)
                     }
@@ -93,6 +97,9 @@ struct ContentView: View {
             case .settingsPrompts:
                 SettingsPromptsView(vm: vm)
                     .navigationTitle("Settings · Prompts")
+            case .settingsVocabulary:
+                SettingsVocabularyView(vm: vm)
+                    .navigationTitle("Settings · Vocabulary")
             case .settingsShortcuts:
                 SettingsShortcutsView(vm: vm)
                     .navigationTitle("Settings · Shortcuts")
@@ -106,35 +113,25 @@ struct ContentView: View {
 private struct BasicDictationView: View {
     @ObservedObject var vm: DictationViewModel
     @Binding var selection: SidebarItem?
+    @State private var scratchText: String = UserDefaults.standard.string(forKey: "scratchpad.text") ?? ""
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Status: \(vm.status)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            GroupBox("Prompt (used for post-processing)") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(vm.prompt.isEmpty ? "No prompt set" : vm.prompt)
-                        .font(.callout)
-                        .foregroundColor(vm.prompt.isEmpty ? .secondary : .primary)
-                        .lineLimit(3)
-                    HStack {
-                        Button("Edit Prompt…") { selection = .settingsPrompts }
-                        Text("Edits live in Settings → Prompts and apply globally.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+        TextEditor(text: $scratchText)
+            .font(.body)
+            .padding(8)
+            .onChange(of: scratchText) { _, newValue in
+                UserDefaults.standard.set(newValue, forKey: "scratchpad.text")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .topLeading) {
+                if scratchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("Scratchpad — click here and use your shortcut to dictate, or type notes…")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 12)
+                        .padding(.leading, 14)
                 }
-                .padding(.top, 2)
             }
-
-            Button(action: { vm.toggle() }) {
-                Text("Toggle Dictation")
-            }
-            .keyboardShortcut(.space, modifiers: [.command, .option])
-        }
-        .padding()
     }
 }
 

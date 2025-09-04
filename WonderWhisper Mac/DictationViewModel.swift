@@ -6,6 +6,7 @@ import Carbon.HIToolbox
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
     @Published var isRecording: Bool = false
+    @Published var audioLevel: Float = 0
 
     // Long-form prompt for LLM
     @Published var prompt: String = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? AppConfig.defaultDictationPrompt
@@ -72,6 +73,11 @@ final class DictationViewModel: ObservableObject {
             inserter: inserter,
             history: history
         )
+        // Now that self is fully initialized, hook up level monitoring
+        recorder.onLevel = { [weak self] level in
+            guard let self = self else { return }
+            Task { @MainActor in self.audioLevel = level }
+        }
         // Apply initial LLM enabled
         Task { await controller.updateLLMEnabled(persistedLLMEnabled) }
 
