@@ -50,7 +50,7 @@ private enum SidebarItem: Hashable, Identifiable {
 }
 
 struct ContentView: View {
-    @StateObject private var vm = DictationViewModel()
+    @ObservedObject var vm: DictationViewModel
     @State private var selection: SidebarItem? = .home
 
     private let items: [SidebarItem] = [
@@ -78,7 +78,7 @@ struct ContentView: View {
         } detail: {
             switch selection ?? .home {
             case .home:
-                BasicDictationView(vm: vm)
+                BasicDictationView(vm: vm, selection: $selection)
                     .navigationTitle("Dictation")
             case .history:
                 HistoryView()
@@ -105,6 +105,7 @@ struct ContentView: View {
 
 private struct BasicDictationView: View {
     @ObservedObject var vm: DictationViewModel
+    @Binding var selection: SidebarItem?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -112,9 +113,21 @@ private struct BasicDictationView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            TextField("Post-processing prompt", text: $vm.prompt, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(3, reservesSpace: true)
+            GroupBox("Prompt (used for post-processing)") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(vm.prompt.isEmpty ? "No prompt set" : vm.prompt)
+                        .font(.callout)
+                        .foregroundColor(vm.prompt.isEmpty ? .secondary : .primary)
+                        .lineLimit(3)
+                    HStack {
+                        Button("Edit Prompt…") { selection = .settingsPrompts }
+                        Text("Edits live in Settings → Prompts and apply globally.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 2)
+            }
 
             Button(action: { vm.toggle() }) {
                 Text("Toggle Dictation")
@@ -126,5 +139,5 @@ private struct BasicDictationView: View {
 }
 
 #Preview {
-    ContentView()
+    ContentView(vm: DictationViewModel())
 }

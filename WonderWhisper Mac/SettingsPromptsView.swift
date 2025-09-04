@@ -7,10 +7,18 @@ struct SettingsPromptsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 GroupBox("Long-form prompt") {
-                    TextEditor(text: $vm.prompt)
-                        .frame(minHeight: 160)
-                        .border(Color.gray.opacity(0.2))
-                        .padding(.top, 4)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextEditor(text: $vm.prompt)
+                            .frame(minHeight: 220)
+                            .border(Color.gray.opacity(0.2))
+                        HStack(spacing: 12) {
+                            Button("Reset to Default") { vm.prompt = AppConfig.defaultDictationPrompt }
+                            Text("Edits apply to all dictations and are sent as the system prompt.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.top, 4)
                 }
                 GroupBox("Custom vocabulary") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -29,4 +37,3 @@ struct SettingsPromptsView: View {
         }
     }
 }
-

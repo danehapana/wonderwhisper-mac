@@ -5,9 +5,10 @@ import Carbon.HIToolbox
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
+    @Published var isRecording: Bool = false
 
     // Long-form prompt for LLM
-    @Published var prompt: String = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? "Rewrite for clarity and professionalism; preserve meaning; fix obvious errors; keep user intent."
+    @Published var prompt: String = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? AppConfig.defaultDictationPrompt
 
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
@@ -37,6 +38,7 @@ final class DictationViewModel: ObservableObject {
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
+        let persistedPrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? "Rewrite for clarity and professionalism; preserve meaning; fix obvious errors; keep user intent."
 
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
@@ -49,8 +51,8 @@ final class DictationViewModel: ObservableObject {
         )
 
         let llm = GroqLLMProvider(client: http)
-        // Build initial structured system prompt
-        let system = PromptBuilder.buildSystemMessage(base: AppConfig.defaultSystemPrompt, customVocabulary: persistedVocabCustom, customSpelling: persistedVocabSpelling)
+        // Build initial structured system prompt using the user-configured prompt as base
+        let system = PromptBuilder.buildSystemMessage(base: persistedPrompt, customVocabulary: persistedVocabCustom, customSpelling: persistedVocabSpelling)
         let llmSettings = LLMSettings(
             endpoint: AppConfig.groqChatCompletions,
             model: persistedLLMModel,
@@ -89,7 +91,10 @@ final class DictationViewModel: ObservableObject {
             Task { [weak self] in
                 guard let self = self else { return }
                 let s = await self.controllerState()
-                await MainActor.run { self.status = s }
+                await MainActor.run {
+                    self.status = s
+                    self.isRecording = (s == "Recording")
+                }
             }
         }
     }
@@ -146,8 +151,8 @@ final class DictationViewModel: ObservableObject {
     }
 
     private func updateProviders() {
-        // Rebuild structured system prompt and update settings
-        let system = PromptBuilder.buildSystemMessage(base: AppConfig.defaultSystemPrompt, customVocabulary: vocabCustom, customSpelling: vocabSpelling)
+        // Rebuild structured system prompt and update settings using current long-form prompt as base
+        let system = PromptBuilder.buildSystemMessage(base: prompt, customVocabulary: vocabCustom, customSpelling: vocabSpelling)
         let tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: 180)
         let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: system, timeout: 60)
         Task {
@@ -157,4 +162,3 @@ final class DictationViewModel: ObservableObject {
         }
     }
 }
-

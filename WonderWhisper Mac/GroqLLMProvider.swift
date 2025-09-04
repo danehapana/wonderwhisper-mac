@@ -28,7 +28,9 @@ final class GroqLLMProvider: LLMProvider {
         if let system = settings.systemPrompt, !system.isEmpty {
             messages.append(["role": "system", "content": system])
         }
-        messages.append(["role": "user", "content": "\(userPrompt)\n\n=== INPUT START ===\n\(text)\n=== INPUT END ==="])        
+        // The 'text' here is the structured user message (<TRANSCRIPT>... etc.)
+        messages.append(["role": "user", "content": text])
+
         let body: [String: Any] = [
             "model": settings.model,
             "messages": messages,
@@ -41,14 +43,26 @@ final class GroqLLMProvider: LLMProvider {
            let first = choices.first,
            let message = first["message"] as? [String: Any],
            let content = message["content"] as? String {
-            return content
+            return Self.extractFormattedText(from: content)
         }
         // Fallback strict decode
         if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: data),
            let content = decoded.choices.first?.message.content {
-            return content
+            return Self.extractFormattedText(from: content)
         }
         throw ProviderError.decodingFailed
     }
-}
 
+    private static func extractFormattedText(from response: String) -> String {
+        // Case-insensitive extraction of content between <FORMATTED_TEXT> tags
+        let lower = response.lowercased()
+        if let openRange = lower.range(of: "<formatted_text>"),
+           let closeRange = lower.range(of: "</formatted_text>") {
+            let start = response.index(response.startIndex, offsetBy: response.distance(from: lower.startIndex, to: openRange.upperBound))
+            let end = response.index(response.startIndex, offsetBy: response.distance(from: lower.startIndex, to: closeRange.lowerBound))
+            let inner = response[start..<end]
+            return String(inner).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return response
+    }
+}
