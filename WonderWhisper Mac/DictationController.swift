@@ -59,23 +59,28 @@ actor DictationController {
         guard let fileURL = maybeURL else { state = .error("No recording file"); return }
 
         do {
+            let overallStart = Date()
             AppLog.dictation.log("Transcription start")
             state = .transcribing
             let t0 = Date()
             let transcript = try await transcriber.transcribe(fileURL: fileURL, settings: transcriberSettings)
-            AppLog.dictation.log("Transcription done in \(Date().timeIntervalSince(t0), format: .fixed(precision: 3))s")
+            let transcribeDT = Date().timeIntervalSince(t0)
+            AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
 
             var output = transcript
+            var llmDT: TimeInterval = 0
+            let selected = screenContext.selectedText()
+            var screenText: String? = nil
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                let selected = screenContext.selectedText()
-                let screenText = await screenContext.captureActiveWindowText()
+                screenText = await screenContext.captureActiveWindowText()
                 let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
                 output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
-                AppLog.dictation.log("LLM processing done in \(Date().timeIntervalSince(t1), format: .fixed(precision: 3))s")
+                llmDT = Date().timeIntervalSince(t1)
+                AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
             }
 
             state = .inserting
@@ -84,7 +89,21 @@ actor DictationController {
 
             // Record history entry
             let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
-            await history?.append(fileURL: currentRecordingURL, appName: appName, bundleID: bundleID, transcript: transcript, output: output)
+            let totalDT = Date().timeIntervalSince(overallStart)
+            await history?.append(
+                fileURL: currentRecordingURL,
+                appName: appName,
+                bundleID: bundleID,
+                transcript: transcript,
+                output: output,
+                screenContext: screenText,
+                selectedText: selected,
+                transcriptionModel: transcriberSettings.model,
+                llmModel: llmEnabled ? llmSettings.model : nil,
+                transcriptionSeconds: transcribeDT,
+                llmSeconds: llmEnabled ? llmDT : nil,
+                totalSeconds: totalDT
+            )
         } catch {
             AppLog.dictation.error("Pipeline error: \(error.localizedDescription)")
             state = .error(error.localizedDescription)
@@ -96,4 +115,43 @@ actor DictationController {
     func updateTranscriberSettings(_ s: TranscriptionSettings) { self.transcriberSettings = s }
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
+
+    func reprocess(entry: HistoryEntry, userPrompt: String) async {
+        guard let history = history, let url = await history.audioURL(for: entry) else { return }
+        do {
+            state = .transcribing
+            let overallStart = Date()
+            let t0 = Date()
+            let transcript = try await transcriber.transcribe(fileURL: url, settings: transcriberSettings)
+            let transcribeDT = Date().timeIntervalSince(t0)
+            var output = transcript
+            var llmDT: TimeInterval = 0
+            let selected = screenContext.selectedText()
+            var screenText: String? = nil
+            if llmEnabled {
+                state = .processing
+                let (appName, _) = screenContext.frontmostAppNameAndBundle()
+                screenText = await screenContext.captureActiveWindowText()
+                let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
+                let t1 = Date()
+                output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                llmDT = Date().timeIntervalSince(t1)
+            }
+            state = .idle
+            var updated = entry
+            updated.date = Date()
+            updated.transcript = transcript
+            updated.output = output
+            updated.screenContext = screenText
+            updated.selectedText = selected
+            updated.transcriptionModel = transcriberSettings.model
+            updated.llmModel = llmEnabled ? llmSettings.model : nil
+            updated.transcriptionSeconds = transcribeDT
+            updated.llmSeconds = llmEnabled ? llmDT : nil
+            updated.totalSeconds = Date().timeIntervalSince(overallStart)
+            await history.replace(id: entry.id, with: updated)
+        } catch {
+            state = .error(error.localizedDescription)
+        }
+    }
 }

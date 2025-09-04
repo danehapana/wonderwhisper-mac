@@ -85,7 +85,7 @@ struct ContentView: View {
                 BasicDictationView(vm: vm, selection: $selection)
                     .navigationTitle("Dictation")
             case .history:
-                HistoryView()
+                HistoryView(vm: vm)
                     .environmentObject(vm.history)
                     .navigationTitle("History")
             case .settingsGeneral:

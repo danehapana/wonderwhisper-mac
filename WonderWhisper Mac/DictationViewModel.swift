@@ -168,4 +168,9 @@ final class DictationViewModel: ObservableObject {
             await controller.updateLLMEnabled(llmEnabled)
         }
     }
+
+    // Reprocess a saved history entry with current settings
+    func reprocessHistoryEntry(_ entry: HistoryEntry) async {
+        await controller.reprocess(entry: entry, userPrompt: prompt)
+    }
 }

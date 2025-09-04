@@ -36,7 +36,7 @@ final class HistoryStore: ObservableObject {
         self.entries = loaded
     }
 
-    func append(fileURL: URL?, appName: String?, bundleID: String?, transcript: String, output: String) async {
+    func append(fileURL: URL?, appName: String?, bundleID: String?, transcript: String, output: String, screenContext: String?, selectedText: String?, transcriptionModel: String?, llmModel: String?, transcriptionSeconds: Double?, llmSeconds: Double?, totalSeconds: Double?) async {
         let id = UUID()
         let date = Date()
         var audioFilename: String? = nil
@@ -61,7 +61,22 @@ final class HistoryStore: ObservableObject {
             }
         }
 
-        let entry = HistoryEntry(id: id, date: date, appName: appName, bundleID: bundleID, transcript: transcript, output: output, audioFilename: audioFilename)
+        var entry = HistoryEntry(
+            id: id,
+            date: date,
+            appName: appName,
+            bundleID: bundleID,
+            transcript: transcript,
+            output: output,
+            audioFilename: audioFilename,
+            screenContext: screenContext,
+            selectedText: selectedText,
+            transcriptionModel: transcriptionModel,
+            llmModel: llmModel,
+            transcriptionSeconds: transcriptionSeconds,
+            llmSeconds: llmSeconds,
+            totalSeconds: totalSeconds
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         let path = entriesDir.appendingPathComponent("\(id).json")
@@ -72,6 +87,25 @@ final class HistoryStore: ObservableObject {
             // ignore persistence failure for now
         }
         entries.insert(entry, at: 0)
+    }
+
+    func replace(id: UUID, with updated: HistoryEntry) async {
+        // Persist to disk
+        let path = entriesDir.appendingPathComponent("\(id).json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        do {
+            let data = try encoder.encode(updated)
+            try data.write(to: path, options: .atomic)
+        } catch {
+            // ignore
+        }
+        if let idx = entries.firstIndex(where: { $0.id == id }) {
+            entries[idx] = updated
+            // Move to top
+            entries.remove(at: idx)
+            entries.insert(updated, at: 0)
+        }
     }
 
     func audioURL(for entry: HistoryEntry) -> URL? {
@@ -87,4 +121,3 @@ final class HistoryStore: ObservableObject {
         }
     }
 }
-
