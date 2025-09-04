@@ -10,6 +10,7 @@ struct SettingsModelsView: View {
                     Text("whisper-large-v3-turbo").tag("whisper-large-v3-turbo")
                     Text("whisper-large-v3").tag("whisper-large-v3")
                     Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
+                    Text("Parakeet v3 (local)").tag("parakeet-local")
                 }
             }
             Section("LLM") {
@@ -24,4 +25,3 @@ struct SettingsModelsView: View {
         .padding()
     }
 }
-

@@ -44,12 +44,17 @@ final class DictationViewModel: ObservableObject {
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
 
-        let transcriber = GroqTranscriptionProvider(client: http)
-        let transcriberSettings = TranscriptionSettings(
+        var transcriber: TranscriptionProvider = GroqTranscriptionProvider(client: http)
+        var transcriberSettings = TranscriptionSettings(
             endpoint: AppConfig.groqAudioTranscriptions,
             model: persistedTranscriptionModel,
             timeout: 180
         )
+        if persistedTranscriptionModel.lowercased().contains("parakeet") || persistedTranscriptionModel.lowercased().contains("local") {
+            transcriber = ParakeetTranscriptionProvider()
+            // Dummy settings to satisfy interface (not used by local provider)
+            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: persistedTranscriptionModel)
+        }
 
         let llm = GroqLLMProvider(client: http)
         // Build initial structured system prompt using the user-configured prompt as base
@@ -160,9 +165,17 @@ final class DictationViewModel: ObservableObject {
     private func updateProviders() {
         // Rebuild structured system prompt and update settings using current long-form prompt as base
         let system = PromptBuilder.buildSystemMessage(base: prompt, customVocabulary: vocabCustom, customSpelling: vocabSpelling)
-        let tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: 180)
+        var provider: TranscriptionProvider? = nil
+        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: 180)
+        if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
+            provider = ParakeetTranscriptionProvider()
+            tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)
+        } else {
+            provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        }
         let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: system, timeout: 60)
         Task {
+            if let p = provider { await controller.updateTranscriberProvider(p) }
             await controller.updateTranscriberSettings(tSettings)
             await controller.updateLLMSettings(lSettings)
             await controller.updateLLMEnabled(llmEnabled)

@@ -23,8 +23,7 @@ struct PromptBuilder {
         out += "The <TRANSCRIPT> content is your primary focus - enhance it using context as reference only.\n"
         out += "</CONTEXT_USAGE_INSTRUCTIONS>\n\n"
 
-        // <VOCABULARY> contains comma-separated items from customVocabulary,
-        // plus both sides of any from=to lines in customSpelling
+        // <VOCABULARY> contains items from customVocabulary only (no device-level replacements here)
         var vocabItems: [String] = []
         let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedVocab.isEmpty {
@@ -34,19 +33,7 @@ struct PromptBuilder {
                 .filter { !$0.isEmpty }
             vocabItems.append(contentsOf: parts)
         }
-        let trimmedSpelling = customSpelling.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedSpelling.isEmpty {
-            let lines = trimmedSpelling.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-            for line in lines where !line.isEmpty && line.contains("=") {
-                let parts = line.split(separator: "=", maxSplits: 1).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"")) }
-                if parts.count == 2 {
-                    let from = parts[0]
-                    let to = parts[1]
-                    if !from.isEmpty { vocabItems.append(from) }
-                    if !to.isEmpty { vocabItems.append(to) }
-                }
-            }
-        }
+        // Note: customSpelling (text replacements) are NOT included in the prompt.
         out += "<VOCABULARY>\n"
         if !vocabItems.isEmpty {
             out += vocabItems.joined(separator: ", ")

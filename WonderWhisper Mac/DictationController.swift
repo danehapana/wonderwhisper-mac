@@ -83,6 +83,14 @@ actor DictationController {
                 AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
             }
 
+            // Apply deterministic text replacements on final output
+            let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+            if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                output = TextReplacement.apply(to: output, withRules: rules)
+            }
+            // Ensure a single trailing space to facilitate continued dictation
+            output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
+
             state = .inserting
             inserter.insert(output)
             state = .idle
@@ -115,6 +123,7 @@ actor DictationController {
     func updateTranscriberSettings(_ s: TranscriptionSettings) { self.transcriberSettings = s }
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
+    func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
 
     func reprocess(entry: HistoryEntry, userPrompt: String) async {
         guard let history = history, let url = await history.audioURL(for: entry) else { return }
@@ -138,6 +147,13 @@ actor DictationController {
                 llmDT = Date().timeIntervalSince(t1)
             }
             state = .idle
+            // Apply deterministic text replacements on final output
+            let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+            if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                output = TextReplacement.apply(to: output, withRules: rules)
+            }
+            // Ensure a single trailing space to facilitate continued dictation
+            output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
             var updated = entry
             updated.date = Date()
             updated.transcript = transcript
