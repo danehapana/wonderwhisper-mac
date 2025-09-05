@@ -27,62 +27,76 @@ final class ScreenCaptureService: NSObject {
         }
     }
 
-    private func captureActiveWindowImage() async -> NSImage? {
+    // Capture a single frame and OCR directly from the CVPixelBuffer
+    private func captureAndRecognizeActiveWindowText() async -> String? {
         do {
             let content = try await SCShareableContent.current
             guard let window = frontmostWindow(in: content) else { return nil }
             let filter = try SCContentFilter(desktopIndependentWindow: window)
             let config = SCStreamConfiguration()
-            // Target a modest resolution for OCR and speed
             let size = window.frame.size
-            config.width = Int(size.width.clamped(to: 200...1800))
-            config.height = Int(size.height.clamped(to: 150...1400))
+            // Capture at (approx) 1:1 device pixels to avoid blurring text
+            let scale = NSScreen.screens.first(where: { $0.frame.intersects(window.frame) })?.backingScaleFactor
+                ?? NSScreen.main?.backingScaleFactor
+                ?? 2.0
+            config.width = max(1, Int((size.width * scale).rounded()))
+            config.height = max(1, Int((size.height * scale).rounded()))
             config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             config.queueDepth = 1
 
             let stream = SCStream(filter: filter, configuration: config, delegate: nil)
-            var captured: NSImage?
+            var capturedText: String?
+            // Configure Vision request once
+            let req = VNRecognizeTextRequest { request, _ in }
+            req.recognitionLevel = .fast
+            req.usesLanguageCorrection = false
+            req.recognitionLanguages = ["en-US"]
+            // With 1:1 device pixels, typical 12–14pt UI text is ~0.008–0.012 of image height
+            req.minimumTextHeight = 0.01
+            if #available(macOS 13.0, *) {
+                req.revision = VNRecognizeTextRequestRevision3
+            }
+
+            let queue = DispatchQueue(label: "ScreenCaptureService.SampleHandler")
             let output = OneShotOutput { sample in
-                if let px = CMSampleBufferGetImageBuffer(sample) {
-                    let ci = CIImage(cvPixelBuffer: px)
-                    let ctx = CIContext(options: nil)
-                    if let cg = ctx.createCGImage(ci, from: ci.extent) {
-                        captured = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+                guard let px = CMSampleBufferGetImageBuffer(sample) else { return }
+                let handler = VNImageRequestHandler(cvPixelBuffer: px, options: [:])
+                do {
+                    try handler.perform([req])
+                    if let observations = req.results as? [VNRecognizedTextObservation] {
+                        // Build code-friendly, ASCII-heavy text and filter noise
+                        let asciiSymbols = " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\t\r\n"
+                        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: asciiSymbols))
+                        let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                            .map { s -> String in
+                                let scalars = s.unicodeScalars.filter { allowed.contains($0) }
+                                return String(String.UnicodeScalarView(scalars))
+                            }
+                            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                            .filter { !$0.isEmpty }
+                        if !lines.isEmpty {
+                            capturedText = lines.joined(separator: "\n")
+                        }
                     }
+                } catch {
+                    // Ignore OCR errors for one-shot
                 }
             }
-            try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: .main)
+            try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
-            // Wait briefly for a frame
-            try? await Task.sleep(nanoseconds: 120_000_000)
+            // Wait briefly for a frame and OCR
+            try? await Task.sleep(nanoseconds: 150_000_000)
             try await stream.stopCapture()
-            return captured
+            return capturedText
         } catch {
             return nil
-        }
-    }
-
-    private func recognizeText(from image: NSImage) async -> String? {
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        return await withCheckedContinuation { cont in
-            let req = VNRecognizeTextRequest { request, error in
-                if let _ = error { cont.resume(returning: nil); return }
-                guard let observations = request.results as? [VNRecognizedTextObservation] else { cont.resume(returning: nil); return }
-                let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                cont.resume(returning: text.isEmpty ? nil : text)
-            }
-            req.recognitionLevel = .fast
-            req.usesLanguageCorrection = true
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do { try handler.perform([req]) } catch { cont.resume(returning: nil) }
         }
     }
 
     func captureActiveWindowText() async -> String? {
         // Try to prompt for Screen Recording permission on first attempt
         if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
-        guard let img = await captureActiveWindowImage() else { return nil }
-        return await recognizeText(from: img)
+        return await captureAndRecognizeActiveWindowText()
     }
 }
 

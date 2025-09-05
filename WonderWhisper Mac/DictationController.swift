@@ -83,7 +83,12 @@ actor DictationController {
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                screenText = await screenContext.captureActiveWindowText()
+                // Prefer AX over OCR when no selection is present
+                if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
+                    screenText = focused
+                } else {
+                    screenText = await screenContext.captureActiveWindowText()
+                }
                 let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
@@ -195,7 +200,12 @@ actor DictationController {
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                screenText = await screenContext.captureActiveWindowText()
+                // Prefer AX over OCR when no selection is present
+                if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
+                    screenText = focused
+                } else {
+                    screenText = await screenContext.captureActiveWindowText()
+                }
                 let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
                 let t1 = Date()
                 output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
