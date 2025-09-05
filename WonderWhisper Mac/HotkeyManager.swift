@@ -4,6 +4,39 @@ import Cocoa
 import ApplicationServices
 
 final class HotkeyManager {
+    enum Selection: String, CaseIterable, Codable {
+        case fnGlobe
+        case leftCommand
+        case leftOption
+        case control // either side
+        case rightCommand
+        case rightOption
+        case commandRightShift
+        case optionRightShift
+        case f5
+
+        var displayName: String {
+            switch self {
+            case .fnGlobe: return "Fn / Globe"
+            case .leftCommand: return "Left Command (⌘)"
+            case .leftOption: return "Left Option (⌥)"
+            case .control: return "Control (⌃)"
+            case .rightCommand: return "Right Command (⌘)"
+            case .rightOption: return "Right Option (⌥)"
+            case .commandRightShift: return "Cmd + Right Shift"
+            case .optionRightShift: return "Option + Right Shift"
+            case .f5: return "F5"
+            }
+        }
+
+        // Whether this selection requires an accessibility event tap
+        var requiresAX: Bool {
+            switch self {
+            case .f5: return false
+            default: return true
+            }
+        }
+    }
     struct Shortcut: Equatable, Codable {
         var keyCode: UInt32 // kVK_ constants (e.g., 49 for Space)
         var modifiers: UInt32 // Carbon modifier mask: cmdKey, optionKey, controlKey, shiftKey
@@ -14,7 +47,17 @@ final class HotkeyManager {
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    // Modifier state tracking for event tap
     private var lastFnFlagsOn: Bool = false
+    private var leftCmdDown = false
+    private var rightCmdDown = false
+    private var leftOptDown = false
+    private var rightOptDown = false
+    private var leftCtrlDown = false
+    private var rightCtrlDown = false
+    private var rightShiftDown = false
+    private var leftShiftDown = false
+    private var selectionActive = false
 
     var onActivate: (() -> Void)?
 
@@ -22,8 +65,8 @@ final class HotkeyManager {
     private var hotkeyPressStart: Date?
     private let briefPressThreshold: TimeInterval = 0.8
 
-    // Settings
-    var useFnGlobe: Bool = false { didSet { updateFnTap() } }
+    // Settings (single source of truth)
+    var selection: Selection? { didSet { applySelection() } }
     var registeredShortcut: Shortcut? { didSet { registerCarbonHotkey() } }
 
     // MARK: - Carbon Global Hotkey (standard key combos)
@@ -71,26 +114,29 @@ final class HotkeyManager {
         // Keep handler installed for lifetime
     }
 
-    // MARK: - Fn/Globe via Accessibility event tap
-    private func updateFnTap() {
-        if useFnGlobe {
-            startFnTap()
+    // MARK: - Accessibility event tap
+    private func applySelection() {
+        stopFnTap()
+        unregisterCarbonHotkey()
+        resetModifierState()
+        guard let sel = selection else { return }
+        if sel.requiresAX {
+            startFnTap(for: sel)
         } else {
-            stopFnTap()
+            // Only F5 currently uses Carbon hotkey
+            if sel == .f5 {
+                registeredShortcut = Shortcut(keyCode: UInt32(kVK_F5), modifiers: 0)
+            }
         }
     }
 
-    private func startFnTap() {
+    private func startFnTap(for sel: Selection) {
         if eventTap != nil { return }
-        let mask = (1 << CGEventType.flagsChanged.rawValue)
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(mask), callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
+        let mask = CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: mask, callback: { (proxy, type, event, userInfo) -> Unmanaged<CGEvent>? in
             guard type == .flagsChanged, let userInfo else { return Unmanaged.passUnretained(event) }
             let manager = Unmanaged<HotkeyManager>.fromOpaque(userInfo).takeUnretainedValue()
-            let flags = event.flags
-            let fnOn = flags.contains(.maskSecondaryFn)
-            if fnOn && !manager.lastFnFlagsOn { manager.handleHotkeyDown() }
-            if !fnOn && manager.lastFnFlagsOn { manager.handleHotkeyUp() }
-            manager.lastFnFlagsOn = fnOn
+            manager.handleFlagsChanged(event: event)
             return Unmanaged.passUnretained(event)
         }, userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())) else {
             // Likely missing Accessibility permission
@@ -114,9 +160,68 @@ final class HotkeyManager {
         runLoopSource = nil
         eventTap = nil
         lastFnFlagsOn = false
+        selectionActive = false
     }
 
     // MARK: - Helpers
+    private func resetModifierState() {
+        leftCmdDown = false; rightCmdDown = false
+        leftOptDown = false; rightOptDown = false
+        leftCtrlDown = false; rightCtrlDown = false
+        leftShiftDown = false; rightShiftDown = false
+        lastFnFlagsOn = false
+        selectionActive = false
+    }
+
+    private func handleFlagsChanged(event: CGEvent) {
+        guard let sel = selection else { return }
+        let flags = event.flags
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // Update per-side modifier booleans based on which key toggled
+        switch keyCode {
+        case CGKeyCode(kVK_Command): leftCmdDown = flags.contains(.maskCommand)
+        case CGKeyCode(kVK_RightCommand): rightCmdDown = flags.contains(.maskCommand)
+        case CGKeyCode(kVK_Option): leftOptDown = flags.contains(.maskAlternate)
+        case CGKeyCode(kVK_RightOption): rightOptDown = flags.contains(.maskAlternate)
+        case CGKeyCode(kVK_Control): leftCtrlDown = flags.contains(.maskControl)
+        case CGKeyCode(kVK_RightControl): rightCtrlDown = flags.contains(.maskControl)
+        case CGKeyCode(kVK_Shift): leftShiftDown = flags.contains(.maskShift)
+        case CGKeyCode(kVK_RightShift): rightShiftDown = flags.contains(.maskShift)
+        default: break
+        }
+
+        // Fn/globe state
+        lastFnFlagsOn = flags.contains(.maskSecondaryFn)
+
+        // Evaluate active condition for current selection
+        let newActive: Bool
+        switch sel {
+        case .fnGlobe:
+            newActive = lastFnFlagsOn
+        case .leftCommand:
+            newActive = leftCmdDown
+        case .leftOption:
+            newActive = leftOptDown
+        case .control:
+            newActive = leftCtrlDown || rightCtrlDown
+        case .rightCommand:
+            newActive = rightCmdDown
+        case .rightOption:
+            newActive = rightOptDown
+        case .commandRightShift:
+            newActive = (leftCmdDown || rightCmdDown) && rightShiftDown
+        case .optionRightShift:
+            newActive = (leftOptDown || rightOptDown) && rightShiftDown
+        case .f5:
+            newActive = false // handled via Carbon hotkey instead
+        }
+
+        if newActive && !selectionActive { handleHotkeyDown() }
+        if !newActive && selectionActive { handleHotkeyUp() }
+        selectionActive = newActive
+    }
+
     private func handleHotkeyDown() {
         hotkeyPressStart = Date()
         onActivate?() // Start recording immediately or toggle if already recording

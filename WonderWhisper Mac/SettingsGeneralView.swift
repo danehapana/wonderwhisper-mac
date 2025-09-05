@@ -33,7 +33,7 @@ struct SettingsGeneralView: View {
             }
             .padding(16)
         }
-        .onAppear { showAXInfo = vm.useFnGlobe && !Self.isAXTrusted() }
+        .onAppear { showAXInfo = vm.hotkeySelection.requiresAX && !Self.isAXTrusted() }
     }
 
     private static func isAXTrusted() -> Bool {
@@ -41,4 +41,3 @@ struct SettingsGeneralView: View {
         return AXIsProcessTrustedWithOptions(opts)
     }
 }
-

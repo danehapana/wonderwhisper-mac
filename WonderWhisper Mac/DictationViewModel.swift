@@ -26,7 +26,12 @@ final class DictationViewModel: ObservableObject {
 
     // Hotkey
     private let hotkeys = HotkeyManager()
-    @Published var useFnGlobe: Bool = false { didSet { updateHotkeys() } }
+    @Published var hotkeySelection: HotkeyManager.Selection = {
+        if let raw = UserDefaults.standard.string(forKey: "hotkey.selection"), let sel = HotkeyManager.Selection(rawValue: raw) {
+            return sel
+        }
+        return .fnGlobe
+    }() { didSet { updateHotkeys() } }
 
     // Insertion
     @Published var useAXInsertion: Bool = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
@@ -86,13 +91,10 @@ final class DictationViewModel: ObservableObject {
         // Apply initial LLM enabled
         Task { await controller.updateLLMEnabled(persistedLLMEnabled) }
 
-        // Default hotkey: ⌘⌥Space
+        // Hotkey callback
         hotkeys.onActivate = { [weak self] in self?.toggle() }
-        hotkeys.registeredShortcut = HotkeyManager.Shortcut(keyCode: UInt32(kVK_Space), modifiers: HotkeyManager.carbonModifiers(from: [.command, .option]))
 
-        // Load saved settings
-        let savedFn = UserDefaults.standard.bool(forKey: "useFnGlobe")
-        self.useFnGlobe = savedFn
+        // Load saved hotkey selection
         updateHotkeys()
         updateProviders()
 
@@ -147,13 +149,9 @@ final class DictationViewModel: ObservableObject {
         do { try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias) } catch { print("Keychain error: \(error)") }
     }
 
-    func setDefaultShortcut() {
-        hotkeys.registeredShortcut = HotkeyManager.Shortcut(keyCode: UInt32(kVK_Space), modifiers: HotkeyManager.carbonModifiers(from: [.command, .option]))
-    }
-
     private func updateHotkeys() {
-        UserDefaults.standard.set(useFnGlobe, forKey: "useFnGlobe")
-        hotkeys.useFnGlobe = useFnGlobe
+        UserDefaults.standard.set(hotkeySelection.rawValue, forKey: "hotkey.selection")
+        hotkeys.selection = hotkeySelection
     }
 
     private func updateInsertion() {

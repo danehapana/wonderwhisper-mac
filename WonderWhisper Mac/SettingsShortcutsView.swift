@@ -7,14 +7,19 @@ struct SettingsShortcutsView: View {
 
     var body: some View {
         Form {
-            Section("Fn/Globe") {
-                Toggle("Use Fn/Globe key to toggle dictation", isOn: $vm.useFnGlobe)
-                    .onChange(of: vm.useFnGlobe) { oldValue, newValue in
-                        showAXInfo = newValue && !Self.isAXTrusted()
+            Section("Global Shortcut") {
+                Picker("Shortcut", selection: $vm.hotkeySelection) {
+                    ForEach(HotkeyManager.Selection.allCases, id: \.self) { sel in
+                        Text(sel.displayName).tag(sel)
                     }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: vm.hotkeySelection) { _, newValue in
+                    showAXInfo = newValue.requiresAX && !Self.isAXTrusted()
+                }
                 if showAXInfo {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Accessibility permission required for Fn/Globe detection.")
+                        Text("This shortcut requires Accessibility permission (for modifier/Fn detection).")
                             .font(.caption)
                         HStack(spacing: 8) {
                             Button("Open Accessibility Settings") { Self.openAXSettings() }
@@ -25,15 +30,10 @@ struct SettingsShortcutsView: View {
                     }
                 }
             }
-            Section("Standard Shortcut") {
-                HStack(spacing: 12) {
-                    Text("Default: ⌘⌥Space")
-                    Button("Use Default") { vm.setDefaultShortcut() }
-                }
-            }
         }
         .formStyle(.grouped)
         .padding()
+        .onAppear { showAXInfo = vm.hotkeySelection.requiresAX && !Self.isAXTrusted() }
     }
 
     private static func isAXTrusted() -> Bool {
@@ -47,4 +47,3 @@ struct SettingsShortcutsView: View {
         }
     }
 }
-

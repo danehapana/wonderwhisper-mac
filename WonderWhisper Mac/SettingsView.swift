@@ -26,15 +26,20 @@ struct SettingsView: View {
                 .padding(.top, 4)
             }
 
-            GroupBox("Global Hotkey") {
+            GroupBox("Global Shortcut") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Toggle("Use Fn/Globe key to toggle dictation", isOn: $vm.useFnGlobe)
-                        .onChange(of: vm.useFnGlobe) { _ in
-                            showAXInfo = vm.useFnGlobe && !Self.isAXTrusted()
+                    Picker("Shortcut", selection: $vm.hotkeySelection) {
+                        ForEach(HotkeyManager.Selection.allCases, id: \.self) { sel in
+                            Text(sel.displayName).tag(sel)
                         }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: vm.hotkeySelection) { _, newValue in
+                        showAXInfo = newValue.requiresAX && !Self.isAXTrusted()
+                    }
                     if showAXInfo {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Accessibility permission required for Fn/Globe detection.")
+                            Text("This shortcut requires Accessibility permission (for modifier/Fn detection).")
                                 .font(.caption)
                             HStack(spacing: 8) {
                                 Button("Open Accessibility Settings") { Self.openAXSettings() }
@@ -43,11 +48,6 @@ struct SettingsView: View {
                                     .foregroundColor(.secondary)
                             }
                         }
-                    }
-                    Divider()
-                    HStack(spacing: 12) {
-                        Text("Standard Shortcut:")
-                        Button("Use ⌘⌥Space (default)") { vm.setDefaultShortcut() }
                     }
                 }
                 .padding(.top, 4)
@@ -89,8 +89,7 @@ struct SettingsView: View {
         }
         .padding(16)
         .onAppear {
-            // Prompt status if needed
-            showAXInfo = vm.useFnGlobe && !Self.isAXTrusted()
+            showAXInfo = vm.hotkeySelection.requiresAX && !Self.isAXTrusted()
         }
     }
 
@@ -105,4 +104,3 @@ struct SettingsView: View {
         }
     }
 }
-
