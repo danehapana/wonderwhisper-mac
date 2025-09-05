@@ -8,8 +8,11 @@ final class DictationViewModel: ObservableObject {
     @Published var isRecording: Bool = false
     @Published var audioLevel: Float = 0
 
-    // Long-form prompt for LLM
-    @Published var prompt: String = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? AppConfig.defaultDictationPrompt
+    // Prompts
+    // System prompt is sent as the system role content
+    @Published var systemPrompt: String = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? "" { didSet { persistAndUpdate() } }
+    // User prompt is an additional user message appended after the structured transcript context
+    @Published var userPrompt: String = UserDefaults.standard.string(forKey: "llm.userMessage") ?? "" { didSet { UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage") } }
 
     // Transcription + LLM preferences
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
@@ -56,7 +59,8 @@ final class DictationViewModel: ObservableObject {
         let persistedVocabCustom = UserDefaults.standard.string(forKey: "vocab.custom") ?? ""
         let persistedVocabSpelling = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
         let persistedUseAXInsertion = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false
-        let persistedPrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? "Rewrite for clarity and professionalism; preserve meaning; fix obvious errors; keep user intent."
+        // Legacy long-form prompt that previously seeded the system message
+        let legacyBasePrompt = UserDefaults.standard.string(forKey: "llm.userPrompt") ?? AppConfig.defaultDictationPrompt
 
         let keychain = KeychainService()
         let http = GroqHTTPClient(apiKeyProvider: { keychain.getSecret(forKey: AppConfig.groqAPIKeyAlias) })
@@ -74,12 +78,16 @@ final class DictationViewModel: ObservableObject {
         }
 
         let llm = GroqLLMProvider(client: http)
-        // Build initial structured system prompt using the user-configured prompt as base
-        let system = PromptBuilder.buildSystemMessage(base: persistedPrompt, customVocabulary: persistedVocabCustom, customSpelling: persistedVocabSpelling)
+        // Initialize prompts: use persisted systemPrompt if set; otherwise seed with the default system template
+        let initialSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
+        self.systemPrompt = initialSystem
+        self.userPrompt = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
+
+        let renderedInitial = PromptBuilder.renderSystemPrompt(template: initialSystem, customVocabulary: persistedVocabCustom)
         let llmSettings = LLMSettings(
             endpoint: AppConfig.groqChatCompletions,
             model: persistedLLMModel,
-            systemPrompt: system,
+            systemPrompt: renderedInitial,
             timeout: 60
         )
 
@@ -144,14 +152,16 @@ final class DictationViewModel: ObservableObject {
     }
 
     func toggle() {
-        // Persist prompt whenever toggling, so changes aren't lost
-        UserDefaults.standard.set(prompt, forKey: "llm.userPrompt")
-        Task { await controller.toggle(userPrompt: prompt) }
+        // Persist prompts whenever toggling, so changes aren't lost
+        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
+        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
+        Task { await controller.toggle(userPrompt: userPrompt) }
     }
 
     func finish() {
-        UserDefaults.standard.set(prompt, forKey: "llm.userPrompt")
-        Task { await controller.finish(userPrompt: prompt) }
+        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
+        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
+        Task { await controller.finish(userPrompt: userPrompt) }
     }
 
     func cancel() {
@@ -185,13 +195,13 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
-        UserDefaults.standard.set(prompt, forKey: "llm.userPrompt")
+        UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
+        UserDefaults.standard.set(userPrompt, forKey: "llm.userMessage")
         updateProviders()
     }
 
     private func updateProviders() {
-        // Rebuild structured system prompt and update settings using current long-form prompt as base
-        let system = PromptBuilder.buildSystemMessage(base: prompt, customVocabulary: vocabCustom, customSpelling: vocabSpelling)
+        // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         var provider: TranscriptionProvider? = nil
         var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: 180)
         if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
@@ -200,7 +210,8 @@ final class DictationViewModel: ObservableObject {
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
-        let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: system, timeout: 60)
+        let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
+        let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60)
         Task {
             if let p = provider { await controller.updateTranscriberProvider(p) }
             await controller.updateTranscriberSettings(tSettings)
@@ -211,7 +222,7 @@ final class DictationViewModel: ObservableObject {
 
     // Reprocess a saved history entry with current settings
     func reprocessHistoryEntry(_ entry: HistoryEntry) async {
-        await controller.reprocess(entry: entry, userPrompt: prompt)
+        await controller.reprocess(entry: entry, userPrompt: userPrompt)
     }
 
     // Paste the last transcription output (LLM if present; else raw transcript)

@@ -67,4 +67,40 @@ struct PromptBuilder {
         out += "\n</SELECTED_TEXT>"
         return out
     }
+
+    // Render a user-configurable system prompt template by injecting current vocabulary and spelling.
+    // Supports either a block form (<TAG>...</TAG>) where inner content is replaced, or a self-closing form (<TAG/>)
+    // which is expanded to a full block with injected content.
+    static func renderSystemPrompt(template: String, customVocabulary: String) -> String {
+        var out = template
+
+        // Build vocabulary string (comma-separated, trimmed)
+        let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
+        var vocabItems: [String] = []
+        if !trimmedVocab.isEmpty {
+            let separators: Set<Character> = [",", "\n", "\r"]
+            vocabItems = trimmedVocab.split(whereSeparator: { separators.contains($0) })
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
+        let vocabJoined = vocabItems.joined(separator: ", ")
+
+        func replaceBlock(tag: String, with content: String) {
+            let open = "<\(tag)>"
+            let close = "</\(tag)>"
+            let selfClose = "<\(tag)/>"
+            if let range = out.range(of: selfClose) {
+                out.replaceSubrange(range, with: "<\(tag)>\n\(content)\n</\(tag)>")
+                return
+            }
+            if let openRange = out.range(of: open), let closeRange = out.range(of: close), openRange.upperBound <= closeRange.lowerBound {
+                out.replaceSubrange(openRange.upperBound..<closeRange.lowerBound, with: "\n\(content)\n")
+            }
+        }
+
+        // Replace vocabulary placeholders
+        replaceBlock(tag: "VOCABULARY", with: vocabJoined)
+
+        return out
+    }
 }

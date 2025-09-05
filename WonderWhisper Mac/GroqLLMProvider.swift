@@ -28,8 +28,12 @@ final class GroqLLMProvider: LLMProvider {
         if let system = settings.systemPrompt, !system.isEmpty {
             messages.append(["role": "system", "content": system])
         }
-        // The 'text' here is the structured user message (<TRANSCRIPT>... etc.)
+        // The 'text' here is the structured context message (<TRANSCRIPT>... etc.)
         messages.append(["role": "user", "content": text])
+        // If the user provided an additional user prompt, include it as a second user message
+        if !userPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            messages.append(["role": "user", "content": userPrompt])
+        }
 
         let body: [String: Any] = [
             "model": settings.model,

@@ -70,15 +70,11 @@ struct SettingsView: View {
                 }
             }
 
-            GroupBox("LLM Prompt & Vocabulary") {
+            GroupBox("Vocabulary & Text Replacements") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Long-form prompt")
-                    TextEditor(text: $vm.prompt)
-                        .frame(minHeight: 120)
-                        .border(Color.gray.opacity(0.2))
                     Text("Custom vocabulary (comma-separated)")
                     TextField("e.g. Groq, Kimi, WonderWhisper", text: $vm.vocabCustom)
-                    Text("Spelling rules (from=to per line)")
+                    Text("Text replacements (from=to per line; applied on-device after LLM)")
                     TextEditor(text: $vm.vocabSpelling)
                         .frame(minHeight: 80)
                         .border(Color.gray.opacity(0.2))
