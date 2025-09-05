@@ -71,7 +71,8 @@ actor DictationController {
             }
             state = .transcribing
             let t0 = Date()
-            let transcript = try await transcriber.transcribe(fileURL: fileURL, settings: transcriberSettings)
+            var transcript: String = ""
+            transcript = try await transcriber.transcribe(fileURL: fileURL, settings: transcriberSettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
 
@@ -86,9 +87,18 @@ actor DictationController {
                 let userMsg = PromptBuilder.buildUserMessage(transcription: transcript, selectedText: selected, appName: appName, screenContents: screenText)
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
-                output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
-                llmDT = Date().timeIntervalSince(t1)
-                AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
+                do {
+                    output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
+                    llmDT = Date().timeIntervalSince(t1)
+                    AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
+                } catch {
+                    let ns = error as NSError
+                    AppLog.dictation.error("LLM error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
+                    // Fallback to raw transcript on LLM failure
+                    output = transcript
+                    llmDT = 0
+                    state = .transcribing
+                }
             }
 
             // Apply deterministic text replacements on final output
@@ -123,6 +133,22 @@ actor DictationController {
         } catch {
             let ns = error as NSError
             AppLog.dictation.error("Pipeline error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+            // Persist audio so the user can reprocess later even on failure
+            let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
+            await history?.append(
+                fileURL: fileURL,
+                appName: appName,
+                bundleID: bundleID,
+                transcript: "",
+                output: "",
+                screenContext: nil,
+                selectedText: screenContext.selectedText(),
+                transcriptionModel: transcriberSettings.model,
+                llmModel: llmEnabled ? llmSettings.model : nil,
+                transcriptionSeconds: nil,
+                llmSeconds: nil,
+                totalSeconds: nil
+            )
             state = .error(error.localizedDescription)
         }
     }

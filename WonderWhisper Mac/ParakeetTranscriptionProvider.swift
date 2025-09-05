@@ -77,10 +77,14 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 throw error
             }
         }
-        // Front-end conditioning: high-pass, optional pre-emphasis, RMS normalization
-        samples = Self.highPass(samples, cutoffHz: 60, sampleRate: 16_000)
-        samples = Self.preEmphasis(samples, coeff: 0.97)
-        samples = Self.normalizeRMS(samples, targetRMS: 0.06, peakLimit: 0.5, maxGain: 8.0)
+        // Front-end conditioning (configurable via UserDefaults)
+        let defaults = UserDefaults.standard
+        let hpHz = defaults.object(forKey: "parakeet.highpass.hz") as? Int ?? 60
+        if hpHz > 0 { samples = Self.highPass(samples, cutoffHz: Double(hpHz), sampleRate: 16_000) }
+        let preEnabled = defaults.object(forKey: "parakeet.preemphasis") as? Bool ?? true
+        if preEnabled { samples = Self.preEmphasis(samples, coeff: 0.97) }
+        let targetRMS = defaults.object(forKey: "parakeet.rms.target") as? Double ?? 0.06
+        samples = Self.normalizeRMS(samples, targetRMS: targetRMS, peakLimit: 0.5, maxGain: 8.0)
         let stats = Self.stats(samples: samples)
         log.notice("[Parakeet] transcribe samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
         AppLog.dictation.log("[Parakeet] samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")

@@ -40,6 +40,9 @@ struct SettingsModelsView: View {
                         }
                         .padding(.top, 4)
                     }
+                    GroupBox("Parakeet Advanced") {
+                        ParakeetAdvancedSettingsView()
+                    }
                 }
             }
             Section("LLM") {
