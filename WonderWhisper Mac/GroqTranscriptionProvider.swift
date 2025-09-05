@@ -13,10 +13,18 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         let fileData = try Data(contentsOf: fileURL)
+        let mime: String
+        switch fileURL.pathExtension.lowercased() {
+        case "wav": mime = "audio/wav"
+        case "m4a": mime = "audio/m4a"
+        case "aac": mime = "audio/aac"
+        case "caf": mime = "audio/x-caf"
+        default: mime = "application/octet-stream"
+        }
         let file = GroqHTTPClient.MultipartFile(
             fieldName: "file",
             filename: fileURL.lastPathComponent,
-            mimeType: "audio/m4a", // adjust if you switch to wav
+            mimeType: mime,
             data: fileData
         )
         let fields = [
@@ -40,4 +48,3 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         throw ProviderError.decodingFailed
     }
 }
-

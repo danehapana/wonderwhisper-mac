@@ -47,6 +47,7 @@ struct SettingsModelsView: View {
                 Picker("LLM model", selection: $vm.llmModel) {
                     Text("moonshotai/kimi-k2-instruct").tag("moonshotai/kimi-k2-instruct")
                     Text("openai/gpt-oss-120b").tag("openai/gpt-oss-120b")
+                    Text("meta-llama/llama-4-scout-17b-16e-instruct").tag("meta-llama/llama-4-scout-17b-16e-instruct")
                 }
             }
         }

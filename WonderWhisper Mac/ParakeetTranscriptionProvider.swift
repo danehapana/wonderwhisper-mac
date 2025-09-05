@@ -62,7 +62,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         try await ensureModelsLoaded()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
-        let samples: [Float]
+        var samples: [Float]
         do {
             samples = try Self.decodeAudioToFloatMono16k(url: fileURL)
         } catch {
@@ -77,6 +77,10 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
                 throw error
             }
         }
+        // Front-end conditioning: high-pass, optional pre-emphasis, RMS normalization
+        samples = Self.highPass(samples, cutoffHz: 60, sampleRate: 16_000)
+        samples = Self.preEmphasis(samples, coeff: 0.97)
+        samples = Self.normalizeRMS(samples, targetRMS: 0.06, peakLimit: 0.5, maxGain: 8.0)
         let stats = Self.stats(samples: samples)
         log.notice("[Parakeet] transcribe samples=\(samples.count, privacy: .public) meanAbs=\(stats.meanAbs, format: .fixed(precision: 4)) peak=\(stats.peak, format: .fixed(precision: 4))")
         AppLog.dictation.log("[Parakeet] samples=\(samples.count) meanAbs=\(String(format: "%.4f", stats.meanAbs)) peak=\(String(format: "%.4f", stats.peak))")
@@ -164,6 +168,64 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             if a > peak { peak = a }
         }
         return (sum / Double(samples.count), peak)
+    }
+
+    // First-order high-pass filter
+    private static func highPass(_ input: [Float], cutoffHz: Double, sampleRate: Double) -> [Float] {
+        guard !input.isEmpty else { return input }
+        let rc = 1.0 / (2.0 * Double.pi * cutoffHz)
+        let dt = 1.0 / sampleRate
+        let alpha = rc / (rc + dt)
+        var out = Array(repeating: Float(0), count: input.count)
+        var yPrev = 0.0
+        var xPrev = 0.0
+        for i in 0..<input.count {
+            let x = Double(input[i])
+            let y = alpha * (yPrev + x - xPrev)
+            out[i] = Float(y)
+            yPrev = y
+            xPrev = x
+        }
+        return out
+    }
+
+    // Simple pre-emphasis
+    private static func preEmphasis(_ input: [Float], coeff: Float) -> [Float] {
+        guard !input.isEmpty else { return input }
+        var out = input
+        var prev: Float = 0
+        for i in 0..<out.count {
+            let cur = out[i]
+            out[i] = cur - coeff * prev
+            prev = cur
+        }
+        return out
+    }
+
+    private static func normalizeRMS(_ input: [Float], targetRMS: Double, peakLimit: Double, maxGain: Double) -> [Float] {
+        guard !input.isEmpty else { return input }
+        // Compute RMS and peak
+        var sumSq: Double = 0
+        var peak: Double = 0
+        for v in input {
+            let d = Double(v)
+            sumSq += d * d
+            let a = abs(d)
+            if a > peak { peak = a }
+        }
+        let rms = sqrt(sumSq / Double(input.count))
+        if rms <= 0 { return input }
+        var gain = targetRMS / rms
+        // Respect peak limit
+        if peak * gain > peakLimit { gain = peakLimit / max(peak, 1e-9) }
+        gain = min(gain, maxGain)
+        if abs(gain - 1.0) < 1e-3 { return input }
+        var out = input
+        for i in 0..<out.count {
+            let v = Double(out[i]) * gain
+            out[i] = Float(max(-1.0, min(1.0, v)))
+        }
+        return out
     }
 
     // Robust decode path using AVAssetReader

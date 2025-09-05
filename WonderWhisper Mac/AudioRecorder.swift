@@ -10,15 +10,17 @@ final class AudioRecorder: NSObject {
 
     func startRecording() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
-        let filename = "dictation_\(UUID().uuidString).m4a"
+        let filename = "dictation_\(UUID().uuidString).wav"
         let url = tempDir.appendingPathComponent(filename)
 
-        // AAC mono at 16kHz keeps files small and is widely accepted
+        // WAV PCM Float32 mono at 16kHz for best ASR compatibility
         let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000.0,
             AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false
         ]
 
         // If a specific input device was selected, optionally switch system default temporarily
