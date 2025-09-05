@@ -173,6 +173,13 @@ actor DictationController {
         state = .idle
     }
 
+    // Insert arbitrary text now (used by paste-last shortcut)
+    func insert(_ text: String) {
+        state = .inserting
+        inserter.insert(text)
+        state = .idle
+    }
+
     func reprocess(entry: HistoryEntry, userPrompt: String) async {
         guard let history = history, let url = await history.audioURL(for: entry) else { return }
         do {

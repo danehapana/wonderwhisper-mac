@@ -30,6 +30,14 @@ struct SettingsShortcutsView: View {
                     }
                 }
             }
+            Section("Paste Last Transcript") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ShortcutRecorderView(shortcut: $vm.pasteShortcut)
+                    Text("Default: ⌃⌘V. Pastes last output (LLM preferred).")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()

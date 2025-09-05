@@ -42,7 +42,9 @@ final class HotkeyManager {
         var modifiers: UInt32 // Carbon modifier mask: cmdKey, optionKey, controlKey, shiftKey
     }
 
-    private var hotKeyRef: EventHotKeyRef?
+    // Carbon hotkeys
+    private var toggleHotKeyRef: EventHotKeyRef?
+    private var pasteHotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
 
     private var eventTap: CFMachPort?
@@ -59,7 +61,9 @@ final class HotkeyManager {
     private var leftShiftDown = false
     private var selectionActive = false
 
+    // Callbacks
     var onActivate: (() -> Void)?
+    var onPaste: (() -> Void)?
 
     // Push-to-talk timing
     private var hotkeyPressStart: Date?
@@ -67,57 +71,79 @@ final class HotkeyManager {
 
     // Settings (single source of truth)
     var selection: Selection? { didSet { applySelection() } }
-    var registeredShortcut: Shortcut? { didSet { registerCarbonHotkey() } }
+    // Toggle/recording shortcut (used for .f5 selection)
+    var registeredShortcut: Shortcut? { didSet { registerCarbonHotkeyForToggle() } }
+    // Additional configurable paste shortcut
+    var pasteShortcut: Shortcut? { didSet { registerCarbonHotkeyForPaste() } }
 
     // MARK: - Carbon Global Hotkey (standard key combos)
-    private func registerCarbonHotkey() {
-        unregisterCarbonHotkey()
-        guard let shortcut = registeredShortcut else { return }
+    // MARK: - Carbon Global Hotkeys
+    private func ensureEventHandlerInstalled() {
+        guard eventHandlerRef == nil else { return }
 
         // Install the event handler once
-        if eventHandlerRef == nil {
-            var specs: [EventTypeSpec] = [
-                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
-                EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
-            ]
-            let callback: EventHandlerUPP = { (_, evtRef, userData) -> OSStatus in
-                let selfRef = Unmanaged<HotkeyManager>.fromOpaque(userData!).takeUnretainedValue()
-                let kind = GetEventKind(evtRef)
+        var specs: [EventTypeSpec] = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
+        let callback: EventHandlerUPP = { (_, evtRef, userData) -> OSStatus in
+            guard let userData = userData else { return noErr }
+            let selfRef = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
+            var hkID = EventHotKeyID()
+            var size = MemoryLayout<EventHotKeyID>.size
+            let status = GetEventParameter(evtRef, UInt32(kEventParamDirectObject), UInt32(typeEventHotKeyID), nil, size, &size, &hkID)
+            let kind = GetEventKind(evtRef)
+            if status == noErr {
+                // id: 1 => toggle; 2 => paste
                 if kind == UInt32(kEventHotKeyPressed) {
-                    selfRef.handleHotkeyDown()
+                    if hkID.id == 1 { selfRef.handleHotkeyDown() }
+                    else if hkID.id == 2 { selfRef.handlePasteDown() }
                 } else if kind == UInt32(kEventHotKeyReleased) {
-                    selfRef.handleHotkeyUp()
+                    if hkID.id == 1 { selfRef.handleHotkeyUp() }
+                    else if hkID.id == 2 { selfRef.handlePasteUp() }
                 }
-                return noErr
             }
-            let target = GetApplicationEventTarget()
-            let userPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-            let status: OSStatus = specs.withUnsafeBufferPointer { buf in
-                InstallEventHandler(target, callback, Int(buf.count), buf.baseAddress, userPtr, &eventHandlerRef)
-            }
-            guard status == noErr else { return }
+            return noErr
         }
+        let target = GetApplicationEventTarget()
+        let userPtr = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        let status: OSStatus = specs.withUnsafeBufferPointer { buf in
+            InstallEventHandler(target, callback, Int(buf.count), buf.baseAddress, userPtr, &eventHandlerRef)
+        }
+        guard status == noErr else { return }
+    }
+
+    private func registerCarbonHotkeyForToggle() {
+        unregisterCarbonHotkey(ref: &toggleHotKeyRef)
+        guard let shortcut = registeredShortcut else { return }
+        ensureEventHandlerInstalled()
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x57574854), id: 1) // 'WWHT'
         var hkRef: EventHotKeyRef?
         let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
-        if status == noErr, let hkRef {
-            self.hotKeyRef = hkRef
-        }
+        if status == noErr, let hkRef { self.toggleHotKeyRef = hkRef }
     }
 
-    private func unregisterCarbonHotkey() {
-        if let ref = hotKeyRef {
-            UnregisterEventHotKey(ref)
-            hotKeyRef = nil
-        }
-        // Keep handler installed for lifetime
+    private func registerCarbonHotkeyForPaste() {
+        unregisterCarbonHotkey(ref: &pasteHotKeyRef)
+        guard let shortcut = pasteShortcut else { return }
+        ensureEventHandlerInstalled()
+
+        let hotKeyID = EventHotKeyID(signature: OSType(0x57575056), id: 2) // 'WWPV'
+        var hkRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
+        if status == noErr, let hkRef { self.pasteHotKeyRef = hkRef }
+    }
+
+    private func unregisterCarbonHotkey(ref: inout EventHotKeyRef?) {
+        if let r = ref { UnregisterEventHotKey(r) }
+        ref = nil
     }
 
     // MARK: - Accessibility event tap
     private func applySelection() {
         stopFnTap()
-        unregisterCarbonHotkey()
+        unregisterCarbonHotkey(ref: &toggleHotKeyRef)
         resetModifierState()
         guard let sel = selection else { return }
         if sel.requiresAX {
@@ -239,6 +265,14 @@ final class HotkeyManager {
         }
     }
 
+    private func handlePasteDown() {
+        onPaste?()
+    }
+
+    private func handlePasteUp() {
+        // no-op for now
+    }
+
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
         var carbon: UInt32 = 0
         if flags.contains(.command) { carbon |= UInt32(cmdKey) }
@@ -249,7 +283,8 @@ final class HotkeyManager {
     }
 
     deinit {
-        unregisterCarbonHotkey()
+        unregisterCarbonHotkey(ref: &toggleHotKeyRef)
+        unregisterCarbonHotkey(ref: &pasteHotKeyRef)
         stopFnTap()
         if let handler = eventHandlerRef {
             RemoveEventHandler(handler)

@@ -33,6 +33,18 @@ final class DictationViewModel: ObservableObject {
         return .fnGlobe
     }() { didSet { updateHotkeys() } }
 
+    // Paste-last shortcut (default: Control + Command + V)
+    @Published var pasteShortcut: HotkeyManager.Shortcut = {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: "pasteShortcut.keyCode") != nil,
+           defaults.object(forKey: "pasteShortcut.modifiers") != nil {
+            let key = UInt32(defaults.integer(forKey: "pasteShortcut.keyCode"))
+            let mod = UInt32(defaults.integer(forKey: "pasteShortcut.modifiers"))
+            return HotkeyManager.Shortcut(keyCode: key, modifiers: mod)
+        }
+        return HotkeyManager.Shortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(cmdKey | controlKey))
+    }() { didSet { updatePasteShortcut() } }
+
     // Insertion
     @Published var useAXInsertion: Bool = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
 
@@ -91,12 +103,14 @@ final class DictationViewModel: ObservableObject {
         // Apply initial LLM enabled
         Task { await controller.updateLLMEnabled(persistedLLMEnabled) }
 
-        // Hotkey callback
+        // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }
+        hotkeys.onPaste = { [weak self] in self?.pasteLastTranscription() }
 
         // Load saved hotkey selection
         updateHotkeys()
         updateProviders()
+        updatePasteShortcut()
 
         // Poll state periodically for a simple UI reflection
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
@@ -154,6 +168,12 @@ final class DictationViewModel: ObservableObject {
         hotkeys.selection = hotkeySelection
     }
 
+    private func updatePasteShortcut() {
+        UserDefaults.standard.set(pasteShortcut.keyCode, forKey: "pasteShortcut.keyCode")
+        UserDefaults.standard.set(pasteShortcut.modifiers, forKey: "pasteShortcut.modifiers")
+        hotkeys.pasteShortcut = pasteShortcut
+    }
+
     private func updateInsertion() {
         UserDefaults.standard.set(useAXInsertion, forKey: "insertion.useAX")
         // InsertionService instance is held inside controller; no direct setter. This flag will be refreshed on next controller creation.
@@ -192,5 +212,13 @@ final class DictationViewModel: ObservableObject {
     // Reprocess a saved history entry with current settings
     func reprocessHistoryEntry(_ entry: HistoryEntry) async {
         await controller.reprocess(entry: entry, userPrompt: prompt)
+    }
+
+    // Paste the last transcription output (LLM if present; else raw transcript)
+    func pasteLastTranscription() {
+        guard let first = history.entries.first else { return }
+        let text = first.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? first.transcript : first.output
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
+        Task { await controller.insert(text) }
     }
 }
