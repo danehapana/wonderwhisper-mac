@@ -15,6 +15,7 @@ actor DictationController {
 
     private var llmEnabled: Bool = true
     private var currentRecordingURL: URL?
+    private var preCapturedScreenText: String?
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -42,6 +43,11 @@ actor DictationController {
                 let url = try recorder.startRecording()
                 currentRecordingURL = url
                 state = .recording
+                // Pre-capture screen context early (AX first, OCR fallback)
+                preCapturedScreenText = nil
+                if llmEnabled {
+                    Task { await self.preCaptureScreenContext() }
+                }
             } catch {
                 AppLog.dictation.error("Recording start failed: \(error.localizedDescription)")
                 state = .error("Recording start failed: \(error.localizedDescription)")
@@ -55,10 +61,8 @@ actor DictationController {
 
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
-        let maybeURL = recorder.stopRecording()
+        let maybeURL = await recorder.stopRecordingAndWait()
         guard let fileURL = maybeURL else { state = .error("No recording file"); return }
-        // Ensure the encoder has flushed the file before we read it for ASR
-        try? await Task.sleep(nanoseconds: 150_000_000)
 
         do {
             let overallStart = Date()
@@ -83,8 +87,10 @@ actor DictationController {
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
-                // Prefer AX over OCR when no selection is present
-                if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
+                // Prefer pre-captured context if available; else AX-first, then OCR
+                if let pre = preCapturedScreenText, !pre.isEmpty {
+                    screenText = pre
+                } else if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
                     screenText = focused
                 } else {
                     screenText = await screenContext.captureActiveWindowText()
@@ -156,6 +162,8 @@ actor DictationController {
             )
             state = .error(error.localizedDescription)
         }
+        // Reset pre-captured context for the next run
+        preCapturedScreenText = nil
     }
 
     func currentState() -> State { state }
@@ -175,6 +183,7 @@ actor DictationController {
         _ = recorder.stopRecording()
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
+        preCapturedScreenText = nil
         state = .idle
     }
 
@@ -234,5 +243,18 @@ actor DictationController {
         } catch {
             state = .error(error.localizedDescription)
         }
+    }
+}
+
+// MARK: - Pre-capture helpers
+extension DictationController {
+    private func preCaptureScreenContext() async {
+        // Try AX first as it's near-instant; fallback to OCR if needed
+        if let focused = screenContext.focusedText(), !focused.isEmpty {
+            self.preCapturedScreenText = focused
+            return
+        }
+        let ocr = await screenContext.captureActiveWindowText()
+        self.preCapturedScreenText = ocr
     }
 }

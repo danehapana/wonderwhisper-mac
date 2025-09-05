@@ -7,6 +7,7 @@ final class AudioRecorder: NSObject {
     private(set) var isRecording: Bool = false
     var onLevel: ((Float) -> Void)?
     private var previousDefaultInputUID: String?
+    private var finishContinuation: CheckedContinuation<URL?, Never>?
 
     func startRecording() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
@@ -65,6 +66,30 @@ final class AudioRecorder: NSObject {
         return recorder.url
     }
 
+    // Wait until AVAudioRecorder flushes and finishes writing before returning the URL
+    func stopRecordingAndWait() async -> URL? {
+        guard isRecording, let recorder else { return nil }
+        let url = recorder.url
+        return await withCheckedContinuation { (cont: CheckedContinuation<URL?, Never>) in
+            finishContinuation = cont
+            self.recorder?.stop()
+            isRecording = false
+            stopLevelUpdates()
+            // Restore previous default input device if we changed it
+            if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
+                if let prev = previousDefaultInputUID {
+                    _ = AudioDeviceManager.setSystemDefaultInput(toUID: prev)
+                    previousDefaultInputUID = nil
+                }
+            }
+            // In case the delegate doesn't fire (shouldn't happen), provide a safety timeout
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                guard let self = self else { return }
+                if let c = self.finishContinuation { self.finishContinuation = nil; c.resume(returning: url) }
+            }
+        }
+    }
+
     private func startLevelUpdates() {
         stopLevelUpdates()
         levelTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
@@ -96,4 +121,9 @@ final class AudioRecorder: NSObject {
     }
 }
 
-extension AudioRecorder: AVAudioRecorderDelegate {}
+extension AudioRecorder: AVAudioRecorderDelegate {
+    func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+        // Resume any waiter with the final URL (even if not successful, caller can decide)
+        if let c = finishContinuation { finishContinuation = nil; c.resume(returning: recorder.url) }
+    }
+}

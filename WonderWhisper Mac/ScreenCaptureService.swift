@@ -84,8 +84,12 @@ final class ScreenCaptureService: NSObject {
             }
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
-            // Wait briefly for a frame and OCR
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            // Wait for the first recognized text or timeout quickly
+            let deadline = Date().addingTimeInterval(0.20) // cap ~200 ms
+            while capturedText == nil && Date() < deadline {
+                try? await Task.sleep(nanoseconds: 30_000_000) // 30 ms slices
+                if capturedText != nil { break }
+            }
             try await stream.stopCapture()
             return capturedText
         } catch {
