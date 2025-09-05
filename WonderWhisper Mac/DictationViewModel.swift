@@ -133,6 +133,15 @@ final class DictationViewModel: ObservableObject {
         Task { await controller.toggle(userPrompt: prompt) }
     }
 
+    func finish() {
+        UserDefaults.standard.set(prompt, forKey: "llm.userPrompt")
+        Task { await controller.finish(userPrompt: prompt) }
+    }
+
+    func cancel() {
+        Task { await controller.cancel() }
+    }
+
     func saveGroqApiKey(_ value: String) {
         let kc = KeychainService()
         do { try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias) } catch { print("Keychain error: \(error)") }

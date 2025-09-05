@@ -160,6 +160,19 @@ actor DictationController {
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
 
+    // Explicit controls for UI actions
+    func finish(userPrompt: String) async {
+        await stopAndProcess(userPrompt: userPrompt)
+    }
+
+    func cancel() async {
+        guard state == .recording else { return }
+        _ = recorder.stopRecording()
+        if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
+        currentRecordingURL = nil
+        state = .idle
+    }
+
     func reprocess(entry: HistoryEntry, userPrompt: String) async {
         guard let history = history, let url = await history.audioURL(for: entry) else { return }
         do {
