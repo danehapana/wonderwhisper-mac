@@ -54,7 +54,10 @@ final class NotchIndicatorController {
 
         // Reposition on screen changes
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.updatePosition(animated: false)
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.updatePosition(animated: false)
+            }
         }
     }
 

@@ -48,7 +48,13 @@ struct PromptBuilder {
     }
 
     // Mirrors Android TextProcessingUtils.buildStructuredUserMessage
-    static func buildUserMessage(transcription: String, selectedText: String?, appName: String?, screenContents: String?) -> String {
+    static func buildUserMessage(transcription: String,
+                                 selectedText: String?,
+                                 appName: String?,
+                                 screenContents: String?,
+                                 currentFieldBefore: String? = nil,
+                                 currentFieldSelection: String? = nil,
+                                 currentFieldAfter: String? = nil) -> String {
         var out = ""
         out += "<TRANSCRIPT>\n"
         out += transcription
@@ -64,7 +70,19 @@ struct PromptBuilder {
 
         out += "<SELECTED_TEXT>\n"
         out += (selectedText ?? "")
-        out += "\n</SELECTED_TEXT>"
+        out += "\n</SELECTED_TEXT>\n\n"
+
+        out += "<CURRENT_FIELD_BEFORE>\n"
+        out += (currentFieldBefore ?? "")
+        out += "\n</CURRENT_FIELD_BEFORE>\n\n"
+
+        out += "<CURRENT_FIELD_SELECTION>\n"
+        out += (currentFieldSelection ?? "")
+        out += "\n</CURRENT_FIELD_SELECTION>\n\n"
+
+        out += "<CURRENT_FIELD_AFTER>\n"
+        out += (currentFieldAfter ?? "")
+        out += "\n</CURRENT_FIELD_AFTER>"
         return out
     }
 

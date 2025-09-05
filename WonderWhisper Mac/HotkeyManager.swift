@@ -82,7 +82,7 @@ final class HotkeyManager {
         guard eventHandlerRef == nil else { return }
 
         // Install the event handler once
-        var specs: [EventTypeSpec] = [
+        let specs: [EventTypeSpec] = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
         ]

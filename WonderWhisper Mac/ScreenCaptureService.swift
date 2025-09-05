@@ -32,7 +32,7 @@ final class ScreenCaptureService: NSObject {
         do {
             let content = try await SCShareableContent.current
             guard let window = frontmostWindow(in: content) else { return nil }
-            let filter = try SCContentFilter(desktopIndependentWindow: window)
+            let filter = SCContentFilter(desktopIndependentWindow: window)
             let config = SCStreamConfiguration()
             let size = window.frame.size
             // Capture at (approx) 1:1 device pixels to avoid blurring text
@@ -63,7 +63,7 @@ final class ScreenCaptureService: NSObject {
                 let handler = VNImageRequestHandler(cvPixelBuffer: px, options: [:])
                 do {
                     try handler.perform([req])
-                    if let observations = req.results as? [VNRecognizedTextObservation] {
+                    if let observations = req.results {
                         // Build code-friendly, ASCII-heavy text and filter noise
                         let asciiSymbols = " !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\t\r\n"
                         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: asciiSymbols))

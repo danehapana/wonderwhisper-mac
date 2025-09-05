@@ -55,7 +55,10 @@ final class WaveformOverlayController {
 
         // Reposition on screen changes
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.positionAtTopCenter()
+            guard let self = self else { return }
+            Task { @MainActor in
+                self.positionAtTopCenter()
+            }
         }
 
         // Button actions
