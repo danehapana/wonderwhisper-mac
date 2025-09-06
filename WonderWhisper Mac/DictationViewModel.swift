@@ -50,12 +50,6 @@ final class DictationViewModel: ObservableObject {
 
     // Insertion
     @Published var useAXInsertion: Bool = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
-    @Published var smartFormatting: Bool = UserDefaults.standard.object(forKey: "insertion.smartFormatting") as? Bool ?? false {
-        didSet {
-            UserDefaults.standard.set(smartFormatting, forKey: "insertion.smartFormatting")
-            Task { await controller.updateSmartFormatting(smartFormatting) }
-        }
-    }
 
     init() {
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
@@ -116,7 +110,6 @@ final class DictationViewModel: ObservableObject {
         }
         // Apply initial LLM enabled
         Task { await controller.updateLLMEnabled(persistedLLMEnabled) }
-        Task { await controller.updateSmartFormatting(smartFormatting) }
 
         // Hotkey callbacks
         hotkeys.onActivate = { [weak self] in self?.toggle() }

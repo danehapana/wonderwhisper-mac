@@ -16,7 +16,6 @@ actor DictationController {
     private var llmEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
-    private var smartFormattingEnabled: Bool = (UserDefaults.standard.object(forKey: "insertion.smartFormatting") as? Bool) ?? false
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -96,22 +95,11 @@ actor DictationController {
                 } else {
                     screenText = await screenContext.captureActiveWindowText()
                 }
-                var fieldBefore: String? = nil
-                var fieldSelection: String? = nil
-                var fieldAfter: String? = nil
-                if let fc = screenContext.currentFieldContext() {
-                    fieldBefore = fc.before
-                    fieldSelection = fc.selection
-                    fieldAfter = fc.after
-                }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
                     appName: appName,
-                    screenContents: screenText,
-                    currentFieldBefore: fieldBefore,
-                    currentFieldSelection: fieldSelection,
-                    currentFieldAfter: fieldAfter
+                    screenContents: screenText
                 )
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
@@ -133,14 +121,6 @@ actor DictationController {
             let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
             if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 output = TextReplacement.apply(to: output, withRules: rules)
-            }
-            // Optional smart in-place formatting using current field context
-            if smartFormattingEnabled, let fc = screenContext.currentFieldContext() {
-                output = InsertionPostProcessor.applySmartFormatting(output: output, before: fc.before, after: fc.after)
-            }
-            // Optional smart in-place formatting using current field context
-            if smartFormattingEnabled, let fc = screenContext.currentFieldContext() {
-                output = InsertionPostProcessor.applySmartFormatting(output: output, before: fc.before, after: fc.after)
             }
             // Ensure a single trailing space to facilitate continued dictation
             output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
@@ -197,7 +177,6 @@ actor DictationController {
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
-    func updateSmartFormatting(_ enabled: Bool) { self.smartFormattingEnabled = enabled }
 
     // Explicit controls for UI actions
     func finish(userPrompt: String) async {
@@ -216,7 +195,15 @@ actor DictationController {
     // Insert arbitrary text now (used by paste-last shortcut)
     func insert(_ text: String) {
         state = .inserting
-        inserter.insert(text)
+        var output = text
+        // Apply deterministic text replacements
+        let rules = UserDefaults.standard.string(forKey: "vocab.spelling") ?? ""
+        if !rules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            output = TextReplacement.apply(to: output, withRules: rules)
+        }
+        // Only add a single trailing space; no other formatting
+        output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
+        inserter.insert(output)
         state = .idle
     }
 
@@ -241,22 +228,11 @@ actor DictationController {
                 } else {
                     screenText = await screenContext.captureActiveWindowText()
                 }
-                var fieldBefore: String? = nil
-                var fieldSelection: String? = nil
-                var fieldAfter: String? = nil
-                if let fc = screenContext.currentFieldContext() {
-                    fieldBefore = fc.before
-                    fieldSelection = fc.selection
-                    fieldAfter = fc.after
-                }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
                     selectedText: selected,
                     appName: appName,
-                    screenContents: screenText,
-                    currentFieldBefore: fieldBefore,
-                    currentFieldSelection: fieldSelection,
-                    currentFieldAfter: fieldAfter
+                    screenContents: screenText
                 )
                 let t1 = Date()
                 output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)

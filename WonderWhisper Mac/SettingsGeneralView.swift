@@ -26,8 +26,6 @@ struct SettingsGeneralView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Use AX direct insertion (faster when supported)", isOn: $vm.useAXInsertion)
                             .help("Requires Accessibility permission. Falls back to paste if not supported.")
-                        Toggle("Smart in-place formatting (capitalization & end punctuation)", isOn: $vm.smartFormatting)
-                            .help("Applies local heuristics using the current text field context to adjust capitalization and sentence-ending punctuation.")
                     }
                 }
 

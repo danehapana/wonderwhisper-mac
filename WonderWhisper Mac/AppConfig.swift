@@ -303,16 +303,11 @@ IMPORTANT: The following context information is ONLY for reference:
 - '<SCREEN_CONTENTS>': Text extracted from the active window
 - '<SELECTED_TEXT>': Text that was selected when recording started
 - '<VOCABULARY>': Important words that should be recognized correctly
- - '<CURRENT_FIELD_BEFORE>': Text immediately before the insertion point (truncated)
- - '<CURRENT_FIELD_SELECTION>': Text currently selected (if any)
- - '<CURRENT_FIELD_AFTER>': Text immediately after the insertion point (truncated)
 
 Use this context to:
 - Fix transcription errors by referencing names, terms, or content from the context
 - Understand the user's intent and environment
 - Prioritize spelling and forms from context over potentially incorrect transcription
-
-When formatting, consider CURRENT_FIELD_* to decide capitalization and sentence boundaries: if BEFORE ends with a sentence break or newline, start with a capital; avoid inserting an extra period if AFTER begins mid-sentence (lowercase), but do add one if AFTER clearly begins a new sentence (uppercase), unless punctuation is already present.
 
 The <TRANSCRIPT> content is your primary focus - enhance it using context as reference only.
 </CONTEXT_USAGE_INSTRUCTIONS>
