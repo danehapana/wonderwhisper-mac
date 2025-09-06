@@ -19,6 +19,13 @@ final class DictationViewModel: ObservableObject {
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
 
+    // Networking
+    @Published var transcriptionTimeoutSeconds: Double = {
+        let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
+        return max(5, min(120, v))
+    }() { didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
+    @Published var forceHTTP2Uploads: Bool = UserDefaults.standard.bool(forKey: "network.force_http2_uploads") { didSet { UserDefaults.standard.set(forceHTTP2Uploads, forKey: "network.force_http2_uploads") } }
+
     // Vocabulary
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }
@@ -69,7 +76,7 @@ final class DictationViewModel: ObservableObject {
         var transcriberSettings = TranscriptionSettings(
             endpoint: AppConfig.groqAudioTranscriptions,
             model: persistedTranscriptionModel,
-            timeout: 180
+            timeout: max(5, min(120, UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10))
         )
         if persistedTranscriptionModel.lowercased().contains("parakeet") || persistedTranscriptionModel.lowercased().contains("local") {
             transcriber = ParakeetTranscriptionProvider()
@@ -203,7 +210,7 @@ final class DictationViewModel: ObservableObject {
     private func updateProviders() {
         // Update settings using the configured system prompt, rendered with current vocabulary/spelling placeholders
         var provider: TranscriptionProvider? = nil
-        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: 180)
+        var tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: transcriptionModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
             provider = ParakeetTranscriptionProvider()
             tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)

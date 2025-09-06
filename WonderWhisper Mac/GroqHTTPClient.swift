@@ -67,14 +67,20 @@ struct GroqHTTPClient {
 
         // If forcing HTTP/2 for uploads, use a curl-based multipart path to avoid HTTP/3/QUIC.
         if AppConfig.forceHTTP2ForUploads {
-            return try await postMultipartViaCurl(
-                url: url,
-                fields: fields,
-                files: files,
-                timeout: timeout,
-                context: context,
-                reqId: reqId
-            )
+            AppLog.network.log("Using curl HTTP/2 path for multipart upload req=\(reqId)")
+            do {
+                return try await postMultipartViaCurl(
+                    url: url,
+                    fields: fields,
+                    files: files,
+                    timeout: timeout,
+                    context: context,
+                    reqId: reqId
+                )
+            } catch {
+                AppLog.network.error("HTTP/2 curl path failed; falling back to URLSession req=\(reqId) error=\((error as NSError).localizedDescription)")
+                // Continue to URLSession path below
+            }
         }
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
@@ -112,7 +118,7 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
     while attempt < maxAttempts {
         attempt += 1
         do {
-            let (data, response) = try await GroqHTTPClient.session.data(for: request)
+            let (data, response) = try await dataWithAttemptTimeout(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 AppLog.network.error("HTTP \(http.statusCode) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
                 throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
@@ -138,6 +144,28 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
         }
     }
     throw lastError ?? ProviderError.notImplemented
+}
+
+// Enforce per-attempt wall-clock timeout regardless of CFNetwork internals.
+private func dataWithAttemptTimeout(for request: URLRequest) async throws -> (Data, URLResponse) {
+    let timeout = max(1.0, request.timeoutInterval)
+    return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+        // Network task
+        group.addTask {
+            return try await GroqHTTPClient.session.data(for: request)
+        }
+        // Timeout task
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            throw NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: [NSLocalizedDescriptionKey: "Attempt timed out after \(Int(timeout))s"])
+        }
+        // Return first to finish; cancel the other
+        defer { group.cancelAll() }
+        guard let result = try await group.next() else {
+            throw NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown, userInfo: [NSLocalizedDescriptionKey: "No result"])
+        }
+        return result
+    }
 }
 
 // MARK: - Curl-based HTTP/2 multipart uploader (opt-in)

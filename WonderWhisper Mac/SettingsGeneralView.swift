@@ -29,6 +29,24 @@ struct SettingsGeneralView: View {
                     }
                 }
 
+                GroupBox("Network & Transcription") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Transcription timeout")
+                            Spacer()
+                            Stepper(value: $vm.transcriptionTimeoutSeconds, in: 5...120, step: 1) {
+                                Text("\(Int(vm.transcriptionTimeoutSeconds))s")
+                                    .monospacedDigit()
+                            }
+                            .frame(maxWidth: 160)
+                        }
+                        .help("If no response within this time, the request fails and will be retried per network policy.")
+
+                        Toggle("Force HTTP/2 for uploads (experimental)", isOn: $vm.forceHTTP2Uploads)
+                            .help("Bypasses HTTP/3/QUIC for multipart uploads to avoid network stalls on some networks.")
+                    }
+                }
+
                 Spacer(minLength: 0)
             }
             .padding(16)
