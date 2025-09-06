@@ -95,14 +95,14 @@ struct HistoryView: View {
                         }
                         GroupBox("Processed") {
                             VStack(alignment: .leading, spacing: 6) {
-                                autoSizingTextBox(e.output, minHeight: 100)
+                                autoSizingTextBox(e.output, availableWidth: geo.size.width - 40)
                                 HStack { Button("Copy Processed") { copy(e.output) } }
                             }
                             .padding(6)
                         }
                         GroupBox("Original Transcript") {
                             VStack(alignment: .leading, spacing: 6) {
-                                autoSizingTextBox(e.transcript, minHeight: 100)
+                                autoSizingTextBox(e.transcript, availableWidth: geo.size.width - 40)
                                 HStack { Button("Copy Original") { copy(e.transcript) } }
                             }
                             .padding(6)
@@ -111,7 +111,7 @@ struct HistoryView: View {
                         if let sys = e.llmSystemMessage, !sys.isEmpty {
                             GroupBox("System Message") {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    autoSizingTextBox(sys, minHeight: 60)
+                                    autoSizingTextBox(sys, availableWidth: geo.size.width - 40)
                                     HStack { Button("Copy System Message") { copy(sys) } }
                                 }.padding(6)
                             }
@@ -119,14 +119,14 @@ struct HistoryView: View {
                         if let usr = e.llmUserMessage, !usr.isEmpty {
                             GroupBox("User Message") {
                                 VStack(alignment: .leading, spacing: 6) {
-                                    autoSizingTextBox(usr, minHeight: 80)
+                                    autoSizingTextBox(usr, availableWidth: geo.size.width - 40)
                                     HStack { Button("Copy User Message") { copy(usr) } }
                                 }.padding(6)
                             }
                         }
                         if let sel = e.selectedText, !sel.isEmpty {
                             GroupBox("Selected Text") {
-                                autoSizingTextBox(sel, minHeight: 40, font: .caption)
+                                autoSizingTextBox(sel, availableWidth: geo.size.width - 40, maxHeight: 200, font: .caption)
                             }
                         }
                         HStack {
@@ -176,22 +176,21 @@ struct HistoryView: View {
     }
 
     // MARK: - Helpers
-    // Auto-sizing, scrollable text box that expands with content up to a reasonable bound
+    // Auto-sizing, scrollable text box that grows to fit content up to maxHeight and otherwise stays compact.
     @ViewBuilder
-    private func autoSizingTextBox(_ text: String, minHeight: CGFloat = 60, font: Font = .body) -> some View {
-        // A scrollable Text with a dynamic frame. We estimate height using NSString bounding rect.
-        GeometryReader { proxy in
-            let width = proxy.size.width - 16 // account for padding inside GroupBox
-            let estimated = estimateHeight(text: text, width: max(width, 100), font: font)
-            let clamped = max(minHeight, min(estimated, 600)) // cap growth to keep UI sane
-            ScrollView {
-                Text(text)
-                    .font(font)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: clamped)
+    private func autoSizingTextBox(_ text: String,
+                                   availableWidth: CGFloat,
+                                   minHeight: CGFloat = 16,
+                                   maxHeight: CGFloat = 400,
+                                   font: Font = .body) -> some View {
+        let measured = estimateHeight(text: text, width: max(availableWidth - 16, 80), font: font)
+        let height = min(max(measured, minHeight), maxHeight)
+        ScrollView {
+            Text(text)
+                .font(font)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: minHeight)
+        .frame(minHeight: height)
     }
 
     private func estimateHeight(text: String, width: CGFloat, font: Font) -> CGFloat {

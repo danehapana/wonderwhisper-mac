@@ -71,12 +71,10 @@ struct PromptBuilder {
         return out
     }
 
-    // Render a user-configurable system prompt template by injecting current vocabulary and spelling.
-    // Supports either a block form (<TAG>...</TAG>) where inner content is replaced, or a self-closing form (<TAG/>)
-    // which is expanded to a full block with injected content.
+    // Render a user-configurable system prompt template by injecting current vocabulary.
+    // IMPORTANT: Only replace placeholders that appear on their own line to avoid
+    // clobbering inline mentions like "`<VOCABULARY>`" inside prose.
     static func renderSystemPrompt(template: String, customVocabulary: String) -> String {
-        var out = template
-
         // Build vocabulary string (comma-separated, trimmed)
         let trimmedVocab = customVocabulary.trimmingCharacters(in: .whitespacesAndNewlines)
         var vocabItems: [String] = []
@@ -88,22 +86,32 @@ struct PromptBuilder {
         }
         let vocabJoined = vocabItems.joined(separator: ", ")
 
-        func replaceBlock(tag: String, with content: String) {
-            let open = "<\(tag)>"
-            let close = "</\(tag)>"
-            let selfClose = "<\(tag)/>"
-            if let range = out.range(of: selfClose) {
-                out.replaceSubrange(range, with: "<\(tag)>\n\(content)\n</\(tag)>")
-                return
-            }
-            if let openRange = out.range(of: open), let closeRange = out.range(of: close), openRange.upperBound <= closeRange.lowerBound {
-                out.replaceSubrange(openRange.upperBound..<closeRange.lowerBound, with: "\n\(content)\n")
+        // Line-wise replacement to avoid matching inline code examples
+        var lines = template.components(separatedBy: .newlines)
+        func trimEquals(_ line: String, _ token: String) -> Bool { line.trimmingCharacters(in: .whitespacesAndNewlines) == token }
+        func leadingSpaces(_ line: String) -> String { String(line.prefix { $0 == " " || $0 == "\t" }) }
+
+        // 1) Self-closing form: <VOCABULARY/>
+        if let idx = lines.firstIndex(where: { trimEquals($0, "<VOCABULARY/>") }) {
+            let indent = leadingSpaces(lines[idx])
+            let block = ["\(indent)<VOCABULARY>", "\(indent)\(vocabJoined)", "\(indent)</VOCABULARY>"]
+            lines.replaceSubrange(idx...idx, with: block)
+            return lines.joined(separator: "\n")
+        }
+
+        // 2) Block form: <VOCABULARY> ... </VOCABULARY>
+        if let open = lines.firstIndex(where: { trimEquals($0, "<VOCABULARY>") }) {
+            if let close = lines.indices.dropFirst(open + 1).first(where: { idx in
+                trimEquals(lines[idx], "</VOCABULARY>")
+            }) {
+                let indent = leadingSpaces(lines[open])
+                let contentLines = vocabJoined.isEmpty ? [] : ["\(indent)\(vocabJoined)"]
+                lines.replaceSubrange((open+1)..<close, with: contentLines)
+                return lines.joined(separator: "\n")
             }
         }
 
-        // Replace vocabulary placeholders
-        replaceBlock(tag: "VOCABULARY", with: vocabJoined)
-
-        return out
+        // If no placeholder found, return as-is
+        return template
     }
 }
