@@ -26,6 +26,11 @@ final class DictationViewModel: ObservableObject {
     }() { didSet { UserDefaults.standard.set(transcriptionTimeoutSeconds, forKey: "transcription.timeout"); updateProviders() } }
     @Published var forceHTTP2Uploads: Bool = UserDefaults.standard.bool(forKey: "network.force_http2_uploads") { didSet { UserDefaults.standard.set(forceHTTP2Uploads, forKey: "network.force_http2_uploads") } }
 
+    // Audio
+    @Published var audioEnhancementEnabled: Bool = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled") {
+        didSet { UserDefaults.standard.set(audioEnhancementEnabled, forKey: "audio.preprocess.enabled") }
+    }
+
     // Vocabulary
     @Published var vocabCustom: String = UserDefaults.standard.string(forKey: "vocab.custom") ?? "" { didSet { persistAndUpdate() } }
     @Published var vocabSpelling: String = UserDefaults.standard.string(forKey: "vocab.spelling") ?? "" { didSet { persistAndUpdate() } }

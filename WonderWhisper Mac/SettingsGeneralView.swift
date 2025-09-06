@@ -29,6 +29,13 @@ struct SettingsGeneralView: View {
                     }
                 }
 
+                GroupBox("Audio") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Audio enhancement (beta)", isOn: $vm.audioEnhancementEnabled)
+                            .help("Applies a subtle high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.")
+                    }
+                }
+
                 GroupBox("Network & Transcription") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
