@@ -27,7 +27,7 @@ final class HistoryStore: ObservableObject {
         try? fm.createDirectory(at: self.entriesDir, withIntermediateDirectories: true)
         try? fm.createDirectory(at: self.audioDir, withIntermediateDirectories: true)
         let persisted = UserDefaults.standard.object(forKey: Self.defaultsMaxKey) as? Int
-        self.maxEntries = persisted ?? 100
+        self.maxEntries = persisted ?? 50
         load()
         enforceMaxEntries()
     }
@@ -132,6 +132,20 @@ final class HistoryStore: ObservableObject {
         } else {
             NSWorkspace.shared.open(entriesDir)
         }
+    }
+
+    func delete(entry: HistoryEntry) {
+        let fm = FileManager.default
+        // Remove JSON
+        let jsonURL = entriesDir.appendingPathComponent("\(entry.id).json")
+        if fm.fileExists(atPath: jsonURL.path) { try? fm.removeItem(at: jsonURL) }
+        // Remove audio
+        if let name = entry.audioFilename {
+            let aURL = audioDir.appendingPathComponent(name)
+            if fm.fileExists(atPath: aURL.path) { try? fm.removeItem(at: aURL) }
+        }
+        // Update in-memory list
+        entries.removeAll { $0.id == entry.id }
     }
 }
 

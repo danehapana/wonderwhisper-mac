@@ -6,6 +6,7 @@ struct HistoryView: View {
     @State private var searchText: String = ""
     @State private var selectionID: HistoryEntry.ID?
     @State private var isReprocessing: Bool = false
+    @State private var pendingDelete: HistoryEntry?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -24,7 +25,7 @@ struct HistoryView: View {
                 Text("Max entries").font(.caption)
                 Spacer()
                 Stepper("\(history.maxEntries)", value: $history.maxEntries, in: 10...500, step: 10)
-                    .labelsHidden()
+                    .monospacedDigit()
             }
             .padding(.vertical, 6)
 
@@ -51,14 +52,25 @@ struct HistoryView: View {
                             Button("Copy Processed") { copy(entry.output.isEmpty ? entry.transcript : entry.output) }
                             Button("Copy Original") { copy(entry.transcript) }
                             Button("Reveal in Finder") { history.revealInFinder(entry: entry) }
+                            Divider()
+                            Button(role: .destructive) { pendingDelete = entry } label: { Text("Delete") }
                         }
                     }
+                    .onDelete(perform: deleteRows)
                 }
                 .searchable(text: $searchText)
                 .listStyle(.inset)
             }
         }
         .padding([.leading, .trailing], 8)
+        .confirmationDialog("Delete this history entry?", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                if let e = pendingDelete { history.delete(entry: e); pendingDelete = nil; selectionID = history.entries.first?.id }
+            }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: {
+            if let e = pendingDelete { Text("This will delete the entry and any associated audio file.\n\n\(e.appName ?? "Unknown App") — \(e.date.formatted(date: .abbreviated, time: .shortened))") }
+        }
     }
 
     private var detailPane: some View {
@@ -203,5 +215,15 @@ struct HistoryView: View {
         let attr = [NSAttributedString.Key.font: uiFont]
         let bounding = (text as NSString).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attr)
         return ceil(bounding.height) + 8
+    }
+}
+
+// MARK: - Deletion helpers
+private extension HistoryView {
+    func deleteRows(at offsets: IndexSet) {
+        // Map offsets in filtered array back to actual entries
+        let toDelete = offsets.compactMap { idx in filtered.indices.contains(idx) ? filtered[idx] : nil }
+        for e in toDelete { history.delete(entry: e) }
+        selectionID = history.entries.first?.id
     }
 }
