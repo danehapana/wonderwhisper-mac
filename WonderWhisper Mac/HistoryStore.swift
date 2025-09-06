@@ -46,7 +46,7 @@ final class HistoryStore: ObservableObject {
         self.entries = loaded
     }
 
-    func append(fileURL: URL?, appName: String?, bundleID: String?, transcript: String, output: String, screenContext: String?, selectedText: String?, transcriptionModel: String?, llmModel: String?, transcriptionSeconds: Double?, llmSeconds: Double?, totalSeconds: Double?) async {
+    func append(fileURL: URL?, appName: String?, bundleID: String?, transcript: String, output: String, screenContext: String?, selectedText: String?, llmSystemMessage: String? = nil, llmUserMessage: String? = nil, transcriptionModel: String?, llmModel: String?, transcriptionSeconds: Double?, llmSeconds: Double?, totalSeconds: Double?) async {
         let id = UUID()
         let date = Date()
         var audioFilename: String? = nil
@@ -81,6 +81,8 @@ final class HistoryStore: ObservableObject {
             audioFilename: audioFilename,
             screenContext: screenContext,
             selectedText: selectedText,
+            llmSystemMessage: llmSystemMessage,
+            llmUserMessage: llmUserMessage,
             transcriptionModel: transcriptionModel,
             llmModel: llmModel,
             transcriptionSeconds: transcriptionSeconds,

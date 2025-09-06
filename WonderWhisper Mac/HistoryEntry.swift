@@ -12,6 +12,9 @@ struct HistoryEntry: Identifiable, Codable, Hashable {
     // Additional context
     var screenContext: String?
     var selectedText: String?
+    // LLM prompts captured at time of processing (for transparency)
+    var llmSystemMessage: String?
+    var llmUserMessage: String?
     // Models
     var transcriptionModel: String?
     var llmModel: String?

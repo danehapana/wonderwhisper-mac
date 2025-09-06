@@ -62,88 +62,96 @@ struct HistoryView: View {
     }
 
     private var detailPane: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let e = selectedEntry {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(e.appName ?? "Unknown App").bold()
-                        if let b = e.bundleID { Text(b).font(.caption).foregroundColor(.secondary) }
-                    }
-                    Spacer()
-                    Button(action: { history.revealInFinder(entry: e) }) { Label("Reveal", systemImage: "folder") }
-                }
-                HStack(spacing: 12) {
-                    if let tm = e.transcriptionModel {
-                        Label("Voice: \(tm)", systemImage: "mic").font(.caption)
-                    }
-                    if let lm = e.llmModel {
-                        Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
-                    }
-                }
-                HStack(spacing: 12) {
-                    if let t = e.transcriptionSeconds {
-                        Text(String(format: "ASR: %.2fs", t)).font(.caption).foregroundColor(.secondary)
-                    }
-                    if let l = e.llmSeconds {
-                        Text(String(format: "LLM: %.2fs", l)).font(.caption).foregroundColor(.secondary)
-                    }
-                    if let tot = e.totalSeconds {
-                        Text(String(format: "Total: %.2fs", tot)).font(.caption).foregroundColor(.secondary)
-                    }
-                }
-                GroupBox("Processed") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ScrollView { Text(e.output).frame(maxWidth: .infinity, alignment: .leading) }
-                            .frame(minHeight: 100)
+        GeometryReader { geo in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let e = selectedEntry {
                         HStack {
-                            Button("Copy Processed") { copy(e.output) }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(e.appName ?? "Unknown App").bold()
+                                if let b = e.bundleID { Text(b).font(.caption).foregroundColor(.secondary) }
+                            }
+                            Spacer()
+                            Button(action: { history.revealInFinder(entry: e) }) { Label("Reveal", systemImage: "folder") }
                         }
-                    }
-                    .padding(6)
-                }
-                GroupBox("Original Transcript") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ScrollView { Text(e.transcript).frame(maxWidth: .infinity, alignment: .leading) }
-                            .frame(minHeight: 100)
+                        HStack(spacing: 12) {
+                            if let tm = e.transcriptionModel {
+                                Label("Voice: \(tm)", systemImage: "mic").font(.caption)
+                            }
+                            if let lm = e.llmModel {
+                                Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
+                            }
+                        }
+                        HStack(spacing: 12) {
+                            if let t = e.transcriptionSeconds {
+                                Text(String(format: "ASR: %.2fs", t)).font(.caption).foregroundColor(.secondary)
+                            }
+                            if let l = e.llmSeconds {
+                                Text(String(format: "LLM: %.2fs", l)).font(.caption).foregroundColor(.secondary)
+                            }
+                            if let tot = e.totalSeconds {
+                                Text(String(format: "Total: %.2fs", tot)).font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        GroupBox("Processed") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                autoSizingTextBox(e.output, minHeight: 100)
+                                HStack { Button("Copy Processed") { copy(e.output) } }
+                            }
+                            .padding(6)
+                        }
+                        GroupBox("Original Transcript") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                autoSizingTextBox(e.transcript, minHeight: 100)
+                                HStack { Button("Copy Original") { copy(e.transcript) } }
+                            }
+                            .padding(6)
+                        }
+                        // Replace Screen Context with full LLM prompt transparency
+                        if let sys = e.llmSystemMessage, !sys.isEmpty {
+                            GroupBox("System Message") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    autoSizingTextBox(sys, minHeight: 60)
+                                    HStack { Button("Copy System Message") { copy(sys) } }
+                                }.padding(6)
+                            }
+                        }
+                        if let usr = e.llmUserMessage, !usr.isEmpty {
+                            GroupBox("User Message") {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    autoSizingTextBox(usr, minHeight: 80)
+                                    HStack { Button("Copy User Message") { copy(usr) } }
+                                }.padding(6)
+                            }
+                        }
+                        if let sel = e.selectedText, !sel.isEmpty {
+                            GroupBox("Selected Text") {
+                                autoSizingTextBox(sel, minHeight: 40, font: .caption)
+                            }
+                        }
                         HStack {
-                            Button("Copy Original") { copy(e.transcript) }
+                            Button {
+                                guard !isReprocessing, let sel = selectedEntry else { return }
+                                isReprocessing = true
+                                Task {
+                                    await vm.reprocessHistoryEntry(sel)
+                                    isReprocessing = false
+                                }
+                            } label: {
+                                if isReprocessing { ProgressView().scaleEffect(0.7) } else { Text("Reprocess") }
+                            }
+                            .disabled(isReprocessing)
+                            Spacer()
                         }
-                    }
-                    .padding(6)
-                }
-                if let sc = e.screenContext, !sc.isEmpty {
-                    GroupBox("Screen Context") {
-                        ScrollView { Text(sc).font(.caption).frame(maxWidth: .infinity, alignment: .leading) }
-                            .frame(minHeight: 60)
+                    } else {
+                        ContentUnavailableView("Select an entry", systemImage: "doc.text")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                if let sel = e.selectedText, !sel.isEmpty {
-                    GroupBox("Selected Text") {
-                        ScrollView { Text(sel).font(.caption).frame(maxWidth: .infinity, alignment: .leading) }
-                            .frame(minHeight: 40)
-                    }
-                }
-                HStack {
-                    Button {
-                        guard !isReprocessing, let sel = selectedEntry else { return }
-                        isReprocessing = true
-                        Task {
-                            await vm.reprocessHistoryEntry(sel)
-                            isReprocessing = false
-                        }
-                    } label: {
-                        if isReprocessing { ProgressView().scaleEffect(0.7) } else { Text("Reprocess") }
-                    }
-                    .disabled(isReprocessing)
-                    Spacer()
-                }
-                Spacer()
-            } else {
-                ContentUnavailableView("Select an entry", systemImage: "doc.text")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: max(geo.size.width - 24, 300), alignment: .center)
+                .padding(12)
             }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -157,13 +165,44 @@ struct HistoryView: View {
         guard !q.isEmpty else { return history.entries }
         return history.entries.filter { e in
             (e.appName?.localizedCaseInsensitiveContains(q) ?? false) ||
-            (e.transcript.localizedCaseInsensitiveContains(q)) ||
-            (e.output.localizedCaseInsensitiveContains(q))
+            e.transcript.localizedCaseInsensitiveContains(q) ||
+            e.output.localizedCaseInsensitiveContains(q)
         }
     }
 
     private var selectedEntry: HistoryEntry? {
         guard let id = selectionID else { return nil }
         return history.entries.first(where: { $0.id == id })
+    }
+
+    // MARK: - Helpers
+    // Auto-sizing, scrollable text box that expands with content up to a reasonable bound
+    @ViewBuilder
+    private func autoSizingTextBox(_ text: String, minHeight: CGFloat = 60, font: Font = .body) -> some View {
+        // A scrollable Text with a dynamic frame. We estimate height using NSString bounding rect.
+        GeometryReader { proxy in
+            let width = proxy.size.width - 16 // account for padding inside GroupBox
+            let estimated = estimateHeight(text: text, width: max(width, 100), font: font)
+            let clamped = max(minHeight, min(estimated, 600)) // cap growth to keep UI sane
+            ScrollView {
+                Text(text)
+                    .font(font)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: clamped)
+        }
+        .frame(minHeight: minHeight)
+    }
+
+    private func estimateHeight(text: String, width: CGFloat, font: Font) -> CGFloat {
+        let uiFont: NSFont
+        switch font {
+        case .caption: uiFont = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        case .subheadline: uiFont = .systemFont(ofSize: 12)
+        default: uiFont = .systemFont(ofSize: NSFont.systemFontSize)
+        }
+        let attr = [NSAttributedString.Key.font: uiFont]
+        let bounding = (text as NSString).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attr)
+        return ceil(bounding.height) + 8
     }
 }

@@ -85,6 +85,8 @@ actor DictationController {
             var llmDT: TimeInterval = 0
             let selected = screenContext.selectedText()
             var screenText: String? = nil
+            var userMsgForHistory: String? = nil
+            let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
@@ -102,6 +104,8 @@ actor DictationController {
                     appName: appName,
                     screenContents: screenText
                 )
+                // Capture full user message for history
+                userMsgForHistory = userMsg
                 AppLog.dictation.log("LLM processing start")
                 let t1 = Date()
                 do {
@@ -128,6 +132,7 @@ actor DictationController {
 
             state = .inserting
             inserter.insert(output)
+
             state = .idle
 
             // Record history entry
@@ -141,6 +146,8 @@ actor DictationController {
                 output: output,
                 screenContext: screenText,
                 selectedText: selected,
+                llmSystemMessage: systemForHistory,
+                llmUserMessage: userMsgForHistory,
                 transcriptionModel: transcriberSettings.model,
                 llmModel: llmEnabled ? llmSettings.model : nil,
                 transcriptionSeconds: transcribeDT,
@@ -160,6 +167,8 @@ actor DictationController {
                 output: "",
                 screenContext: nil,
                 selectedText: screenContext.selectedText(),
+                llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
+                llmUserMessage: nil,
                 transcriptionModel: transcriberSettings.model,
                 llmModel: llmEnabled ? llmSettings.model : nil,
                 transcriptionSeconds: nil,
@@ -219,6 +228,9 @@ actor DictationController {
             let transcribeDT = Date().timeIntervalSince(t0)
             var output = transcript
             var llmDT: TimeInterval = 0
+            var userMsgForHistory: String? = nil
+            let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
+
             let selected = screenContext.selectedText()
             var screenText: String? = nil
             if llmEnabled {
@@ -236,6 +248,8 @@ actor DictationController {
                     appName: appName,
                     screenContents: screenText
                 )
+                // Capture full user message for history
+                userMsgForHistory = userMsg
                 let t1 = Date()
                 output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
                 llmDT = Date().timeIntervalSince(t1)
@@ -254,6 +268,8 @@ actor DictationController {
             updated.output = output
             updated.screenContext = screenText
             updated.selectedText = selected
+            updated.llmSystemMessage = systemForHistory
+            updated.llmUserMessage = userMsgForHistory
             updated.transcriptionModel = transcriberSettings.model
             updated.llmModel = llmEnabled ? llmSettings.model : nil
             updated.transcriptionSeconds = transcribeDT
