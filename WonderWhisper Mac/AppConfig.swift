@@ -14,6 +14,12 @@ struct AppConfig {
     // Keychain alias for the Groq API key
     static let groqAPIKeyAlias = "GROQ_API_KEY"
 
+    // Networking feature flags
+    // Toggle via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_uploads -bool YES
+    static var forceHTTP2ForUploads: Bool {
+        UserDefaults.standard.bool(forKey: "network.force_http2_uploads")
+    }
+
     // Exact Android default dictation prompt (baseline for new users)
     static let defaultDictationPrompt: String = """
 You are an expert, non-sentient, speech-to-text processing engine named "FormatterAI". Your sole and exclusive purpose is to reformat the raw text provided within the `<TRANSCRIPT>` tags. You operate by following a strict, non-deviating workflow.
