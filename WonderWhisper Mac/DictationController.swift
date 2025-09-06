@@ -76,7 +76,8 @@ actor DictationController {
             state = .transcribing
             let t0 = Date()
             var transcript: String = ""
-            transcript = try await transcriber.transcribe(fileURL: fileURL, settings: transcriberSettings)
+            let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
+            transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
 
@@ -213,7 +214,8 @@ actor DictationController {
             state = .transcribing
             let overallStart = Date()
             let t0 = Date()
-            let transcript = try await transcriber.transcribe(fileURL: url, settings: transcriberSettings)
+            let reprocSettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "reprocess")
+            let transcript = try await transcriber.transcribe(fileURL: url, settings: reprocSettings)
             let transcribeDT = Date().timeIntervalSince(t0)
             var output = transcript
             var llmDT: TimeInterval = 0

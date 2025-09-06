@@ -22,10 +22,13 @@ public struct TranscriptionSettings {
     public let endpoint: URL
     public let model: String
     public let timeout: TimeInterval
-    public init(endpoint: URL, model: String, timeout: TimeInterval = 180) {
+    // Optional context label to help diagnose where requests originate (e.g., "hotkey", "reprocess")
+    public let context: String?
+    public init(endpoint: URL, model: String, timeout: TimeInterval = 180, context: String? = nil) {
         self.endpoint = endpoint
         self.model = model
         self.timeout = timeout
+        self.context = context
     }
 }
 

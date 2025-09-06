@@ -34,7 +34,8 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             to: settings.endpoint,
             fields: fields,
             files: [file],
-            timeout: settings.timeout
+            timeout: settings.timeout,
+            context: settings.context
         )
         // Many OpenAI-compatible transcription endpoints return {"text": "..."}
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
