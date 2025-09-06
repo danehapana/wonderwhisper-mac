@@ -12,9 +12,10 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        let fileData = try Data(contentsOf: fileURL)
+        let inputURL = AudioPreprocessor.processIfEnabled(fileURL)
+        let fileData = try Data(contentsOf: inputURL)
         let mime: String
-        switch fileURL.pathExtension.lowercased() {
+        switch inputURL.pathExtension.lowercased() {
         case "wav": mime = "audio/wav"
         case "m4a": mime = "audio/m4a"
         case "aac": mime = "audio/aac"
@@ -23,13 +24,14 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         }
         let file = GroqHTTPClient.MultipartFile(
             fieldName: "file",
-            filename: fileURL.lastPathComponent,
+            filename: inputURL.lastPathComponent,
             mimeType: mime,
             data: fileData
         )
-        let fields = [
-            "model": settings.model
-        ]
+        var fields: [String: String] = ["model": settings.model]
+        // Optional: tighten decoding by providing language if known
+        if let lang = Locale.preferredLanguages.first?.split(separator: "-").first { fields["language"] = String(lang) }
+        fields["temperature"] = "0"
         let data = try await client.postMultipart(
             to: settings.endpoint,
             fields: fields,
