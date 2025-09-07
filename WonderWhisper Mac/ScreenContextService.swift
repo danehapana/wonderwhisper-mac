@@ -25,9 +25,23 @@ final class ScreenContextService {
         var focused: AnyObject?
         let err = AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute as CFString, &focused)
         guard err == .success, let element = focused else { return nil }
+        // Try direct selected text first
         var sel: AnyObject?
         let res = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextAttribute as CFString, &sel)
         if res == .success, let s = sel as? String, !s.isEmpty { return s }
+        // Some editors expose range APIs instead of materializing the string
+        var rangeValue: AnyObject?
+        let res2 = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextRangeAttribute as CFString, &rangeValue)
+        if res2 == .success, let axRange = rangeValue {
+            var strForRange: AnyObject?
+            let paramRes = AXUIElementCopyParameterizedAttributeValue(
+                element as! AXUIElement,
+                kAXStringForRangeParameterizedAttribute as CFString,
+                axRange,
+                &strForRange
+            )
+            if paramRes == .success, let s = strForRange as? String, !s.isEmpty { return s }
+        }
         return nil
     }
 

@@ -16,6 +16,7 @@ actor DictationController {
     private var llmEnabled: Bool = true
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
+    private var preCapturedScreenMethod: String?
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -85,6 +86,7 @@ actor DictationController {
             var llmDT: TimeInterval = 0
             let selected = screenContext.selectedText()
             var screenText: String? = nil
+            var screenMethod: String? = nil
             var userMsgForHistory: String? = nil
             let systemForHistory = llmEnabled ? llmSettings.systemPrompt : nil
             if llmEnabled {
@@ -93,10 +95,13 @@ actor DictationController {
                 // Prefer pre-captured context if available; else AX-first, then OCR
                 if let pre = preCapturedScreenText, !pre.isEmpty {
                     screenText = pre
+                    screenMethod = preCapturedScreenMethod
                 } else if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
                     screenText = focused
+                    screenMethod = "AX"
                 } else {
                     screenText = await screenContext.captureActiveWindowText()
+                    screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
@@ -145,6 +150,7 @@ actor DictationController {
                 transcript: transcript,
                 output: output,
                 screenContext: screenText,
+                screenContextMethod: screenMethod,
                 selectedText: selected,
                 llmSystemMessage: systemForHistory,
                 llmUserMessage: userMsgForHistory,
@@ -166,6 +172,7 @@ actor DictationController {
                 transcript: "",
                 output: "",
                 screenContext: nil,
+                screenContextMethod: nil,
                 selectedText: screenContext.selectedText(),
                 llmSystemMessage: llmEnabled ? llmSettings.systemPrompt : nil,
                 llmUserMessage: nil,
@@ -179,6 +186,7 @@ actor DictationController {
         }
         // Reset pre-captured context for the next run
         preCapturedScreenText = nil
+        preCapturedScreenMethod = nil
     }
 
     func currentState() -> State { state }
@@ -233,14 +241,17 @@ actor DictationController {
 
             let selected = screenContext.selectedText()
             var screenText: String? = nil
+            var screenMethod: String? = nil
             if llmEnabled {
                 state = .processing
                 let (appName, _) = screenContext.frontmostAppNameAndBundle()
                 // Prefer AX over OCR when no selection is present
                 if (selected?.isEmpty ?? true), let focused = screenContext.focusedText(), !focused.isEmpty {
                     screenText = focused
+                    screenMethod = "AX"
                 } else {
                     screenText = await screenContext.captureActiveWindowText()
+                    screenMethod = (screenText?.isEmpty ?? true) ? nil : "OCR"
                 }
                 let userMsg = PromptBuilder.buildUserMessage(
                     transcription: transcript,
@@ -268,6 +279,7 @@ actor DictationController {
             updated.output = output
             updated.screenContext = screenText
             updated.selectedText = selected
+            updated.screenContextMethod = screenMethod
             updated.llmSystemMessage = systemForHistory
             updated.llmUserMessage = userMsgForHistory
             updated.transcriptionModel = transcriberSettings.model
@@ -288,9 +300,11 @@ extension DictationController {
         // Try AX first as it's near-instant; fallback to OCR if needed
         if let focused = screenContext.focusedText(), !focused.isEmpty {
             self.preCapturedScreenText = focused
+            self.preCapturedScreenMethod = "AX"
             return
         }
         let ocr = await screenContext.captureActiveWindowText()
         self.preCapturedScreenText = ocr
+        self.preCapturedScreenMethod = (ocr?.isEmpty ?? true) ? nil : "OCR"
     }
 }

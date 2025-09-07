@@ -11,6 +11,8 @@ struct HistoryEntry: Identifiable, Codable, Hashable {
     var audioFilename: String?
     // Additional context
     var screenContext: String?
+    // How screen context was captured: "AX" or "OCR"
+    var screenContextMethod: String?
     var selectedText: String?
     // LLM prompts captured at time of processing (for transparency)
     var llmSystemMessage: String?

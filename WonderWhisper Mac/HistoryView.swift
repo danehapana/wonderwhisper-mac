@@ -39,7 +39,18 @@ struct HistoryView: View {
                             HStack {
                                 Text(entry.appName ?? "Unknown App").bold()
                                 Spacer()
-                                Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                                HStack(spacing: 6) {
+                                    if let m = entry.screenContextMethod, !m.isEmpty {
+                                        Text(m)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(Color.secondary.opacity(0.12))
+                                            .clipShape(Capsule())
+                                    }
+                                    Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                                }
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -92,6 +103,9 @@ struct HistoryView: View {
                             }
                             if let lm = e.llmModel {
                                 Label("LLM: \(lm)", systemImage: "brain.head.profile").font(.caption)
+                            }
+                            if let m = e.screenContextMethod, !m.isEmpty {
+                                Label("Context: \(m)", systemImage: "eye").font(.caption)
                             }
                         }
                         HStack(spacing: 12) {
