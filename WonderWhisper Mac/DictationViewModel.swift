@@ -190,7 +190,11 @@ final class DictationViewModel: ObservableObject {
 
     func saveGroqApiKey(_ value: String) {
         let kc = KeychainService()
-        do { try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias) } catch { print("Keychain error: \(error)") }
+        do { try kc.setSecret(value, forKey: AppConfig.groqAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
     }
 
     private func updateHotkeys() {

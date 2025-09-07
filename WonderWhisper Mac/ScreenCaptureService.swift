@@ -65,7 +65,9 @@ final class ScreenCaptureService: NSObject {
                 let title = window.title ?? "(no title)"
                 let f = window.frame
                 let bid = window.owningApplication?.bundleIdentifier ?? "(unknown)"
+                #if DEBUG
                 print("[OCR] chosen window title=\(title) size=\(Int(f.width))x\(Int(f.height)) app=\(bid)")
+                #endif
             }
             let filter = SCContentFilter(desktopIndependentWindow: window)
             let config = SCStreamConfiguration()
@@ -169,7 +171,9 @@ final class ScreenCaptureService: NSObject {
                         }
                         let w = CVPixelBufferGetWidth(px)
                         let h = CVPixelBufferGetHeight(px)
+                        #if DEBUG
                         print("[OCR] image=\(w)x\(h) score=\(String(format: "%.2f", bestScore)) lines=\(lineCount) editor=\(isCodeEditor) accurate=\(shouldPreferAccurate) minFast=\(String(format: "%.4f", minHFast)) minAcc=\(String(format: "%.4f", minHAcc))")
+                        #endif
                     }
                     if let text = bestText, !text.isEmpty {
                         capturedText = text

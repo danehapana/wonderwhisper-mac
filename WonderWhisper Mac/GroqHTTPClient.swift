@@ -46,6 +46,10 @@ struct GroqHTTPClient {
         AppLog.network.log("POST Multipart [\(context ?? "-")] to \(url.absoluteString, privacy: .public) with \(files.count) file(s) req=\(reqId)")
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
+        // Pre-reserve capacity to minimize reallocations during multipart assembly
+        let filesBytes = files.reduce(0) { $0 + $1.data.count }
+        let estimatedOverhead = (fields.count * 128) + (files.count * 512) + 1024
+        body.reserveCapacity(filesBytes + estimatedOverhead)
 
         func append(_ string: String) { body.append(string.data(using: .utf8)!) }
 

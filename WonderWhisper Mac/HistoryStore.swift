@@ -15,6 +15,12 @@ final class HistoryStore: ObservableObject {
     private let baseDir: URL
     private let entriesDir: URL
     private let audioDir: URL
+    private let decoder = JSONDecoder()
+    private let encoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
+        return e
+    }()
 
     init() {
         let fm = FileManager.default
@@ -36,9 +42,8 @@ final class HistoryStore: ObservableObject {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: entriesDir, includingPropertiesForKeys: nil) else { return }
         var loaded: [HistoryEntry] = []
-        let decoder = JSONDecoder()
         for f in files where f.pathExtension == "json" {
-            if let data = try? Data(contentsOf: f), let entry = try? decoder.decode(HistoryEntry.self, from: data) {
+            if let data = try? Data(contentsOf: f, options: .mappedIfSafe), let entry = try? decoder.decode(HistoryEntry.self, from: data) {
                 loaded.append(entry)
             }
         }
@@ -90,8 +95,6 @@ final class HistoryStore: ObservableObject {
             llmSeconds: llmSeconds,
             totalSeconds: totalSeconds
         )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         let path = entriesDir.appendingPathComponent("\(id).json")
         do {
             let data = try encoder.encode(entry)
@@ -106,8 +109,6 @@ final class HistoryStore: ObservableObject {
     func replace(id: UUID, with updated: HistoryEntry) async {
         // Persist to disk
         let path = entriesDir.appendingPathComponent("\(id).json")
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
         do {
             let data = try encoder.encode(updated)
             try data.write(to: path, options: .atomic)

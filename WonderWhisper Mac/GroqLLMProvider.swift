@@ -50,12 +50,17 @@ final class GroqLLMProvider: LLMProvider {
             return Self.extractFormattedText(from: content)
         }
         // Fallback strict decode
-        if let decoded = try? JSONDecoder().decode(ChatResponse.self, from: data),
+        if let decoded = try? Self.sharedDecoder.decode(ChatResponse.self, from: data),
            let content = decoded.choices.first?.message.content {
             return Self.extractFormattedText(from: content)
         }
         throw ProviderError.decodingFailed
     }
+
+    private static let sharedDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        return d
+    }()
 
     private static func extractFormattedText(from response: String) -> String {
         // Case-insensitive extraction of content between <FORMATTED_TEXT> tags

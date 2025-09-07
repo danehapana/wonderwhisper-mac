@@ -13,7 +13,8 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         let inputURL = AudioPreprocessor.processIfEnabled(fileURL)
-        let fileData = try Data(contentsOf: inputURL)
+        // Memory-map audio to reduce peak memory and speed up reads
+        let fileData = try Data(contentsOf: inputURL, options: .mappedIfSafe)
         let mime: String
         switch inputURL.pathExtension.lowercased() {
         case "wav": mime = "audio/wav"
@@ -44,10 +45,15 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
            let text = json["text"] as? String {
             return text
         }
-        // Try strict decoding fallback
-        if let decoded = try? JSONDecoder().decode(Response.self, from: data), let t = decoded.text {
+        // Try strict decoding fallback with a shared decoder
+        if let decoded = try? Self.sharedDecoder.decode(Response.self, from: data), let t = decoded.text {
             return t
         }
         throw ProviderError.decodingFailed
     }
+
+    private static let sharedDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        return d
+    }()
 }
