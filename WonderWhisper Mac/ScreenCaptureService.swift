@@ -2,8 +2,10 @@ import Foundation
 import AppKit
 import Vision
 import ScreenCaptureKit
+import OSLog
 
 final class ScreenCaptureService: NSObject {
+    private static let signposter = OSSignposter(logger: AppLog.ocr)
     private func frontmostWindow(in content: SCShareableContent) -> SCWindow? {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let pid = frontApp?.processIdentifier
@@ -38,7 +40,10 @@ final class ScreenCaptureService: NSObject {
     // Capture a single frame and OCR directly from the CVPixelBuffer
     private func captureAndRecognizeActiveWindowText() async -> String? {
         do {
+            let sid = Self.signposter.makeSignpostID()
+            let state_sc = Self.signposter.beginInterval("SCShareableContent.current", id: sid)
             let content = try await SCShareableContent.current
+            Self.signposter.endInterval("SCShareableContent.current", state_sc)
             guard let window = frontmostWindow(in: content) else { return nil }
             // Heuristics: detect code editors (Cursor, VS Code, JetBrains, Xcode)
             let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
@@ -86,7 +91,9 @@ final class ScreenCaptureService: NSObject {
             let finalFast = Float(userMinH ?? 0.0)
             fastReq.minimumTextHeight = max(0.0, finalFast)
             let minHFast = finalFast
-            if #available(macOS 13.0, *) { fastReq.revision = VNRecognizeTextRequestRevision3 }
+            if #available(macOS 13.0, *) {
+                fastReq.revision = VNRecognizeTextRequestRevision3
+            }
 
             let accurateReq = VNRecognizeTextRequest { _, _ in }
             accurateReq.recognitionLevel = .accurate
@@ -95,9 +102,11 @@ final class ScreenCaptureService: NSObject {
             let finalAcc = Float(userMinH ?? 0.0)
             accurateReq.minimumTextHeight = max(0.0, finalAcc)
             let minHAcc = finalAcc
-            if #available(macOS 13.0, *) { accurateReq.revision = VNRecognizeTextRequestRevision3 }
+            if #available(macOS 13.0, *) {
+                accurateReq.revision = VNRecognizeTextRequestRevision3
+            }
 
-            let queue = DispatchQueue(label: "ScreenCaptureService.SampleHandler")
+            let queue = DispatchQueue(label: "ScreenCaptureService.SampleHandler", qos: .userInitiated)
             let output = OneShotOutput { sample in
                 guard let px = CMSampleBufferGetImageBuffer(sample) else { return }
                 // Helper to evaluate text quality (confidence only; no ASCII filtering)
@@ -120,7 +129,10 @@ final class ScreenCaptureService: NSObject {
 
                 do {
                     let handler = VNImageRequestHandler(cvPixelBuffer: px, options: [:])
+                    let sid = Self.signposter.makeSignpostID()
+                    let state_fast = Self.signposter.beginInterval("OCR.fast", id: sid)
                     try handler.perform([fastReq])
+                    Self.signposter.endInterval("OCR.fast", state_fast)
                     var bestScore: Double = 0
                     var bestText: String? = nil
                     do {
@@ -128,16 +140,26 @@ final class ScreenCaptureService: NSObject {
                         bestScore = s
                         bestText = t
                     }
-                    // If quality is low, try accurate pass on the same frame
-                    if bestScore < 0.6 && shouldPreferAccurate {
-                        try handler.perform([accurateReq])
-                        let (s2, t2) = qualityScore(accurateReq.results)
-                        if s2 > bestScore { bestScore = s2; bestText = t2 }
-                    } else if bestScore < 0.30 {
-                        // Safety net: even if accurate is off, attempt once when quality is catastrophic
-                        try? handler.perform([accurateReq])
-                        let (s2, t2) = qualityScore(accurateReq.results)
-                        if s2 > bestScore { bestScore = s2; bestText = t2 }
+                    let lc = bestText?.split(separator: "\n").count ?? 0
+                    let cc = bestText?.count ?? 0
+                    let goodEnough = (lc >= 15) || (cc >= 200) || (bestScore >= 0.50)
+                    if !goodEnough {
+                        if bestScore < 0.6 && shouldPreferAccurate {
+                            let sid2 = Self.signposter.makeSignpostID()
+                            let state_acc = Self.signposter.beginInterval("OCR.accurate", id: sid2)
+                            try handler.perform([accurateReq])
+                            Self.signposter.endInterval("OCR.accurate", state_acc)
+                            let (s2, t2) = qualityScore(accurateReq.results)
+                            if s2 > bestScore { bestScore = s2; bestText = t2 }
+                        } else if bestScore < 0.30 {
+                            // Safety net: even if accurate is off, attempt once when quality is catastrophic
+                            let sid2 = Self.signposter.makeSignpostID()
+                            let state_acc = Self.signposter.beginInterval("OCR.accurate", id: sid2)
+                            try? handler.perform([accurateReq])
+                            Self.signposter.endInterval("OCR.accurate", state_acc)
+                            let (s2, t2) = qualityScore(accurateReq.results)
+                            if s2 > bestScore { bestScore = s2; bestText = t2 }
+                        }
                     }
                     // Optional debug: log dimensions and line count for troubleshooting
                     if UserDefaults.standard.bool(forKey: "ocr.debug") {
@@ -159,7 +181,7 @@ final class ScreenCaptureService: NSObject {
             try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: queue)
             try await stream.startCapture()
             // Wait for the first recognized text or timeout quickly
-            let baseTimeout: TimeInterval = shouldPreferAccurate ? 0.60 : 0.20
+            let baseTimeout: TimeInterval = shouldPreferAccurate ? 0.60 : 0.17
             let deadline = Date().addingTimeInterval(baseTimeout)
             while capturedText == nil && Date() < deadline {
                 try? await Task.sleep(nanoseconds: 30_000_000) // 30 ms slices
