@@ -1,0 +1,10 @@
+---
+description: Security and configuration guidance
+---
+# Security & Configuration
+
+- Never commit secrets; prefer `*.xcconfig` and use Keychain at runtime.
+- Review `Signing & Capabilities` and `*.entitlements` for least privilege; enable Hardened Runtime.
+- Avoid private APIs; audit third‑party dependencies periodically.
+- Keep model/API keys in the Keychain and load via dedicated services (e.g., `KeychainService`).
+

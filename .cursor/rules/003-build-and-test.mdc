@@ -1,0 +1,20 @@
+---
+description: Build, Test, and Development commands for WonderWhisper Mac
+---
+# Build, Test, and Development
+
+- **Open in Xcode**:
+  - `open "WonderWhisper Mac.xcodeproj"` (use `.xcworkspace` if present).
+- **Build (Debug)**:
+  - ```bash
+    xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -configuration Debug build
+    ```
+- **Test (macOS)**:
+  - ```bash
+    xcodebuild -project "WonderWhisper Mac.xcodeproj" -scheme "WonderWhisper Mac" -destination 'platform=macOS' test
+    ```
+- **Run locally**:
+  - Use Xcode ▶︎, or `open build/Debug/WonderWhisper\ Mac.app` (path may vary).
+
+Prefer absolute paths in commands within this workspace.
+
