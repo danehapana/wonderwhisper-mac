@@ -78,6 +78,10 @@ final class MenuBarController: NSObject {
         menu.addItem(inputMenu)
 
         menu.addItem(.separator())
+        let apiItem = NSMenuItem(title: "API Keys…", action: #selector(openAPIKeys), keyEquivalent: ",")
+        apiItem.keyEquivalentModifierMask = [.command]
+        apiItem.target = self
+        menu.addItem(apiItem)
         menu.addItem(NSMenuItem(title: "Quit WonderWhisper", action: #selector(quitApp), keyEquivalent: "q"))
         return menu
     }
@@ -92,6 +96,11 @@ final class MenuBarController: NSObject {
         statusItem.menu = buildMenu()
     }
     @objc private func quitApp() { NSApp.terminate(nil) }
+
+    @objc private func openAPIKeys() {
+        // Post a notification for ContentView to switch to API Keys
+        NotificationCenter.default.post(name: .openAPIKeysSettings, object: nil)
+    }
 
     @objc private func addClipboardToVocabulary() {
         guard let vm = vm else { return }

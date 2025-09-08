@@ -27,3 +27,7 @@ struct WonderWhisper_MacApp: App {
         }
     }
 }
+
+extension Notification.Name {
+    static let openAPIKeysSettings = Notification.Name("openAPIKeysSettings")
+}

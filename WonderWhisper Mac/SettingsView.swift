@@ -13,14 +13,28 @@ struct SettingsView: View {
                 .font(.title3)
                 .bold()
 
-            GroupBox("Groq API Key") {
-                VStack(alignment: .leading, spacing: 8) {
-                    SecureField("Enter Groq API Key", text: $apiKeyText)
-                    HStack {
-                        Button("Save API Key") { vm.saveGroqApiKey(apiKeyText); apiKeyText = "" }
-                        Text("Stored in Keychain as \(AppConfig.groqAPIKeyAlias)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+            GroupBox("API Keys") {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Groq API Key").font(.subheadline)
+                        SecureField("Enter Groq API Key", text: $apiKeyText)
+                        HStack {
+                            Button("Save Groq Key") { vm.saveGroqApiKey(apiKeyText); apiKeyText = "" }
+                            Text("Stored as \(AppConfig.groqAPIKeyAlias)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("AssemblyAI API Key").font(.subheadline)
+                        SecureField("Enter AssemblyAI API Key", text: $vm.assemblyAIKeyInput)
+                        HStack {
+                            Button("Save AssemblyAI Key") { vm.saveAssemblyAIKey(vm.assemblyAIKeyInput); vm.assemblyAIKeyInput = "" }
+                            Text("Stored as \(AppConfig.assemblyAIAPIKeyAlias)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
                 .padding(.top, 4)

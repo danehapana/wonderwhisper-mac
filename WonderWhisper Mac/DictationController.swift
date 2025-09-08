@@ -43,6 +43,13 @@ actor DictationController {
                 AppLog.dictation.log("Recording start")
                 let url = try recorder.startRecording()
                 currentRecordingURL = url
+                // If AssemblyAI v3 streaming is active, begin live session and stream mic frames
+                if let aai = transcriber as? AssemblyAIStreamingProvider {
+                    try await aai.beginRealtimeSession(sampleRate: 16_000)
+                    try? recorder.startStreamingPCM16 { data in
+                        Task { try? await aai.feedPCM16(data) }
+                    }
+                }
                 state = .recording
                 // Pre-capture screen context early (AX first, OCR fallback)
                 preCapturedScreenText = nil
@@ -62,6 +69,8 @@ actor DictationController {
 
     private func stopAndProcess(userPrompt: String) async {
         guard state == .recording else { return }
+        // Stop live streaming if active
+        if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
         let maybeURL = await recorder.stopRecordingAndWait()
         guard let fileURL = maybeURL else { state = .error("No recording file"); return }
 
@@ -78,7 +87,16 @@ actor DictationController {
             let t0 = Date()
             var transcript: String = ""
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
-            transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+            if let aai = transcriber as? AssemblyAIStreamingProvider {
+                // Prefer the live session's final transcript for speed
+                transcript = try await aai.endRealtimeSessionAndGetTranscript()
+                // If empty (fallback), run file-based for safety
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else {
+                transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+            }
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
 

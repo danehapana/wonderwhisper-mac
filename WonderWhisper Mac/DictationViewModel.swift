@@ -19,6 +19,9 @@ final class DictationViewModel: ObservableObject {
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
 
+    // API Key inputs (not persisted directly; saved via Keychain on action)
+    @Published var assemblyAIKeyInput: String = ""
+
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
         let v = UserDefaults.standard.object(forKey: "transcription.timeout") as? Double ?? 10
@@ -96,6 +99,11 @@ final class DictationViewModel: ObservableObject {
             transcriber = ParakeetTranscriptionProvider()
             // Dummy settings to satisfy interface (not used by local provider)
             transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: persistedTranscriptionModel)
+        } else if persistedTranscriptionModel == "assemblyai-streaming" {
+            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
+            transcriber = AssemblyAIStreamingProvider(apiKey: key)
+            // Endpoint not used by streaming provider but keep required contract
+            transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: persistedTranscriptionModel, timeout: 180)
         }
 
         let llm = GroqLLMProvider(client: http)
@@ -206,6 +214,19 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func saveAssemblyAIKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.assemblyAIAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+        // If currently selected, refresh provider so it picks up new key
+        if transcriptionModel == "assemblyai-streaming" {
+            updateProviders()
+        }
+    }
+
     private func updateHotkeys() {
         UserDefaults.standard.set(hotkeySelection.rawValue, forKey: "hotkey.selection")
         hotkeys.selection = hotkeySelection
@@ -240,6 +261,11 @@ final class DictationViewModel: ObservableObject {
         if transcriptionModel.lowercased().contains("parakeet") || transcriptionModel.lowercased().contains("local") {
             provider = ParakeetTranscriptionProvider()
             tSettings = TranscriptionSettings(endpoint: URL(string: "https://localhost")!, model: transcriptionModel)
+        } else if transcriptionModel == "assemblyai-streaming" {
+            let key = KeychainService().getSecret(forKey: AppConfig.assemblyAIAPIKeyAlias) ?? ""
+            provider = AssemblyAIStreamingProvider(apiKey: key)
+            // Endpoint not used by streaming provider, but keep for logging
+            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }

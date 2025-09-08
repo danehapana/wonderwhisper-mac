@@ -9,6 +9,14 @@ final class AudioRecorder: NSObject {
     private var previousDefaultInputUID: String?
     private var finishContinuation: CheckedContinuation<URL?, Never>?
 
+    // Live streaming support (AVAudioEngine)
+    private var engine: AVAudioEngine?
+    private var converter: AVAudioConverter?
+    private var pcmAccumulator = Data()
+    private var isStreaming: Bool = false
+    private let streamQueue = DispatchQueue(label: "audio.stream.queue", qos: .userInitiated)
+    private var onPCM16Frame: ((Data) -> Void)?
+
     func startRecording() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
         let filename = "dictation_\(UUID().uuidString).wav"
@@ -125,5 +133,72 @@ extension AudioRecorder: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
         // Resume any waiter with the final URL (even if not successful, caller can decide)
         if let c = finishContinuation { finishContinuation = nil; c.resume(returning: recorder.url) }
+    }
+}
+
+// MARK: - Live Streaming (PCM16 16 kHz mono)
+extension AudioRecorder {
+    func startStreamingPCM16(onFrame: @escaping (Data) -> Void) throws {
+        guard !isStreaming else { return }
+        isStreaming = true
+        self.onPCM16Frame = onFrame
+
+        let engine = AVAudioEngine()
+        self.engine = engine
+        let input = engine.inputNode
+        let inputFormat = input.inputFormat(forBus: 0)
+        let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: true
+        )!
+        self.converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        pcmAccumulator.removeAll(keepingCapacity: true)
+
+        // 50ms at 16kHz = 800 samples (mono) = 1600 bytes
+        let chunkBytes = 800 * 2
+
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            guard let self = self, let converter = self.converter else { return }
+            // Prepare output buffer with a reasonable capacity
+            guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(1600)) else { return }
+            outBuffer.frameLength = 0
+
+            let status = converter.convert(to: outBuffer, error: nil, withInputFrom: { _, outStatus in
+                outStatus.pointee = .haveData
+                return buffer
+            })
+
+            if status == .haveData, let channel = outBuffer.int16ChannelData {
+                let samples = channel[0]
+                let frames = Int(outBuffer.frameLength)
+                let bytes = UnsafeBufferPointer(start: samples, count: frames)
+                let data = Data(buffer: bytes)
+                self.pcmAccumulator.append(data)
+
+                while self.pcmAccumulator.count >= chunkBytes {
+                    let chunk = self.pcmAccumulator.prefix(chunkBytes)
+                    self.pcmAccumulator.removeFirst(chunkBytes)
+                    let chunkData = Data(chunk)
+                    self.streamQueue.async { [onFrame] in
+                        onFrame(chunkData)
+                    }
+                }
+            }
+        }
+
+        try engine.start()
+    }
+
+    func stopStreamingPCM16() {
+        guard isStreaming else { return }
+        isStreaming = false
+        if let input = engine?.inputNode { input.removeTap(onBus: 0) }
+        engine?.stop()
+        engine = nil
+        converter = nil
+        pcmAccumulator.removeAll()
+        onPCM16Frame = nil
     }
 }

@@ -15,6 +15,7 @@ private enum SidebarItem: Hashable, Identifiable {
     case settingsPrompts
     case settingsVocabulary
     case settingsShortcuts
+    case settingsAPIKeys
 
     var id: String {
         switch self {
@@ -25,6 +26,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsPrompts: return "settings.prompts"
         case .settingsVocabulary: return "settings.vocabulary"
         case .settingsShortcuts: return "settings.shortcuts"
+        case .settingsAPIKeys: return "settings.apiKeys"
         }
     }
 
@@ -37,6 +39,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsPrompts: return "Prompts"
         case .settingsVocabulary: return "Vocabulary"
         case .settingsShortcuts: return "Shortcuts"
+        case .settingsAPIKeys: return "API Keys"
         }
     }
 
@@ -49,6 +52,7 @@ private enum SidebarItem: Hashable, Identifiable {
         case .settingsPrompts: return "text.justify.left"
         case .settingsVocabulary: return "textformat.abc"
         case .settingsShortcuts: return "keyboard"
+        case .settingsAPIKeys: return "key"
         }
     }
 }
@@ -58,7 +62,7 @@ struct ContentView: View {
     @State private var selection: SidebarItem? = .home
 
     private let items: [SidebarItem] = [
-        .home, .history, .settingsGeneral, .settingsModels, .settingsPrompts, .settingsVocabulary, .settingsShortcuts
+        .home, .history, .settingsGeneral, .settingsModels, .settingsPrompts, .settingsVocabulary, .settingsShortcuts, .settingsAPIKeys
     ]
 
     var body: some View {
@@ -71,7 +75,7 @@ struct ContentView: View {
                     }
                 }
                 Section("Settings") {
-                    ForEach([SidebarItem.settingsGeneral, SidebarItem.settingsModels, SidebarItem.settingsPrompts, SidebarItem.settingsVocabulary, SidebarItem.settingsShortcuts], id: \.self) { item in
+                    ForEach([SidebarItem.settingsGeneral, SidebarItem.settingsModels, SidebarItem.settingsPrompts, SidebarItem.settingsVocabulary, SidebarItem.settingsShortcuts, SidebarItem.settingsAPIKeys], id: \.self) { item in
                         Label(item.title, systemImage: item.systemImage)
                             .tag(item)
                     }
@@ -103,10 +107,16 @@ struct ContentView: View {
             case .settingsShortcuts:
                 SettingsShortcutsView(vm: vm)
                     .navigationTitle("Settings · Shortcuts")
+            case .settingsAPIKeys:
+                SettingsAPIKeysView(vm: vm)
+                    .navigationTitle("Settings · API Keys")
             }
         }
         .frame(minWidth: 680, minHeight: 420)
         .onAppear { if selection == nil { selection = .home } }
+        .onReceive(NotificationCenter.default.publisher(for: .openAPIKeysSettings)) { _ in
+            selection = .settingsAPIKeys
+        }
     }
 }
 
