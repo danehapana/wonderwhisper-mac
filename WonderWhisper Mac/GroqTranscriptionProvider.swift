@@ -13,6 +13,12 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         let inputURL = AudioPreprocessor.processIfEnabled(fileURL)
+        // Cache lookup
+        let preprocessingEnabled = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled")
+        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: preprocessingEnabled),
+           let cached = TranscriptionCache.shared.lookup(key) {
+            return cached
+        }
         // Memory-map audio to reduce peak memory and speed up reads
         let fileData = try Data(contentsOf: inputURL, options: .mappedIfSafe)
         let mime: String
@@ -43,10 +49,16 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         // Many OpenAI-compatible transcription endpoints return {"text": "..."}
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let text = json["text"] as? String {
+            if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: preprocessingEnabled) {
+                TranscriptionCache.shared.store(key, result: text)
+            }
             return text
         }
         // Try strict decoding fallback with a shared decoder
         if let decoded = try? Self.sharedDecoder.decode(Response.self, from: data), let t = decoded.text {
+            if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: preprocessingEnabled) {
+                TranscriptionCache.shared.store(key, result: t)
+            }
             return t
         }
         throw ProviderError.decodingFailed

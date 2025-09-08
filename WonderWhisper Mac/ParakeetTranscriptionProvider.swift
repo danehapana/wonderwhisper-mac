@@ -62,6 +62,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         try await ensureModelsLoaded()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
+        // Cache lookup
+        let preprocessingEnabled = false
+        if let key = TranscriptionCache.shared.key(for: fileURL, provider: "parakeet", model: settings.model, language: nil, preprocessing: preprocessingEnabled),
+           let cached = TranscriptionCache.shared.lookup(key) {
+            return cached
+        }
         var samples: [Float]
         do {
             samples = try Self.decodeAudioToFloatMono16k(url: fileURL)
@@ -113,7 +119,11 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         log.notice("[Parakeet] result length=\(result.text.count, privacy: .public) preview=\(String(preview), privacy: .public)")
         AppLog.dictation.log("[Parakeet] result length=\(result.text.count) preview=\(String(preview))")
         // Keep models warm for subsequent transcriptions to avoid re-initialization errors
-        return result.text
+        let text = result.text
+        if let key = TranscriptionCache.shared.key(for: fileURL, provider: "parakeet", model: settings.model, language: nil, preprocessing: preprocessingEnabled) {
+            TranscriptionCache.shared.store(key, result: text)
+        }
+        return text
     }
 
     // Decode arbitrary audio to mono 16k Float32 samples

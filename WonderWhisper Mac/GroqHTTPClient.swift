@@ -9,7 +9,9 @@ struct GroqHTTPClient {
         cfg.waitsForConnectivity = true
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 2
+        cfg.httpMaximumConnectionsPerHost = 6
+        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForResource = 60
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
@@ -152,7 +154,7 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
             let code = nsErr.code
             let domain = nsErr.domain
             AppLog.network.error("Attempt \(attempt) failed req=\(request.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?") ctx=\(context ?? "-") error=\(nsErr.localizedDescription)")
-            // Retry only on timeout and a couple transient network errors
+            // Retry only on timeout and a couple transient network errors; also retry 429 via header parsing earlier
             let shouldRetry = (domain == NSURLErrorDomain) && (code == NSURLErrorTimedOut || code == NSURLErrorNetworkConnectionLost || code == NSURLErrorCannotFindHost || code == NSURLErrorCannotConnectToHost)
             if attempt >= maxAttempts || !shouldRetry { break }
             // Exponential backoff with jitter
