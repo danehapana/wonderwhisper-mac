@@ -51,7 +51,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         try await mgr.initialize(models: models)
         #if compiler(>=5.9)
         // Best-effort signal
-        if let available = (try? Mirror(reflecting: mgr).descendant("isAvailable")) as? Bool {
+        if let available = Mirror(reflecting: mgr).descendant("isAvailable") as? Bool {
             log.notice("[Parakeet] manager available=\(available, privacy: .public)")
             AppLog.dictation.log("[Parakeet] manager available=\(available)")
         }

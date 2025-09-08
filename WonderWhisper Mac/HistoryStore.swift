@@ -40,14 +40,22 @@ final class HistoryStore: ObservableObject {
 
     func load() {
         let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: entriesDir, includingPropertiesForKeys: nil) else { return }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
+        guard let files = try? fm.contentsOfDirectory(at: entriesDir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { return }
+        // Consider only JSON files and sort by most recent file date (modification or creation)
+        let jsonFiles = files.filter { $0.pathExtension == "json" }
+        func fileDate(_ url: URL) -> Date {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            return values?.contentModificationDate ?? values?.creationDate ?? .distantPast
+        }
+        let sorted = jsonFiles.sorted { fileDate($0) > fileDate($1) }
+        let limited = sorted.prefix(maxEntries)
         var loaded: [HistoryEntry] = []
-        for f in files where f.pathExtension == "json" {
+        for f in limited {
             if let data = try? Data(contentsOf: f, options: .mappedIfSafe), let entry = try? decoder.decode(HistoryEntry.self, from: data) {
                 loaded.append(entry)
             }
         }
-        loaded.sort { $0.date > $1.date }
         self.entries = loaded
     }
 

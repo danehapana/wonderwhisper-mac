@@ -45,6 +45,7 @@ final class DictationViewModel: ObservableObject {
 
     private let controller: DictationController
     private var timer: Timer?
+    private var idleSkipCounter: Int = 0
     let history = HistoryStore()
 
     // Hotkey
@@ -143,6 +144,14 @@ final class DictationViewModel: ObservableObject {
         // Poll state periodically for a simple UI reflection
         timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             guard let self = self else { return }
+            // Throttle polling when idle to reduce wakeups
+            let isActive = self.isRecording || self.status == "Transcribing" || self.status == "Processing" || self.status == "Inserting"
+            if !isActive {
+                idleSkipCounter = (idleSkipCounter + 1) % 2 // ~2.5 Hz when idle
+                if idleSkipCounter != 0 { return }
+            } else {
+                idleSkipCounter = 0
+            }
             Task { [weak self] in
                 guard let self = self else { return }
                 let s = await self.controllerState()

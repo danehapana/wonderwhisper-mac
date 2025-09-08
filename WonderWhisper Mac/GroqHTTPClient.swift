@@ -33,6 +33,23 @@ struct GroqHTTPClient {
         return try await performWithRetry(request: request, start: start, context: context)
     }
 
+    // Typed JSON encoder variant to avoid bridging to Foundation types
+    func postJSONEncodable<T: Encodable>(to url: URL, body: T, timeout: TimeInterval, context: String? = nil) async throws -> Data {
+        let start = Date()
+        let reqId = UUID().uuidString
+        AppLog.network.log("POST JSON [\(context ?? "-")] to \(url.absoluteString, privacy: .public) req=\(reqId)")
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
+        request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
+        request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(body)
+
+        return try await performWithRetry(request: request, start: start, context: context)
+    }
+
     struct MultipartFile {
         let fieldName: String
         let filename: String

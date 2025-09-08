@@ -147,7 +147,7 @@ enum AudioPreprocessor {
             buf.frameLength = AVAudioFrameCount(n)
             samples.withUnsafeBufferPointer { ptr in
                 if let base = ptr.baseAddress {
-                    buf.floatChannelData![0].assign(from: base + offset, count: n)
+            buf.floatChannelData![0].update(from: base + offset, count: n)
                 }
             }
             try file.write(from: buf)
@@ -155,4 +155,3 @@ enum AudioPreprocessor {
         }
     }
 }
-

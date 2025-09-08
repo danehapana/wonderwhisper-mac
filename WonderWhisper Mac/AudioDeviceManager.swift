@@ -30,8 +30,13 @@ struct AudioDeviceInfo: Hashable {
 
 enum AudioDeviceManager {
     static func availableInputDevices() -> [AudioDeviceInfo] {
-        let devices = AVCaptureDevice.devices(for: .audio)
-        return devices.map { AudioDeviceInfo(uid: $0.uniqueID, name: $0.localizedName) }
+        // Use discovery session (preferred over deprecated devices(for:))
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInMicrophone, .externalUnknown],
+            mediaType: .audio,
+            position: .unspecified
+        )
+        return session.devices.map { AudioDeviceInfo(uid: $0.uniqueID, name: $0.localizedName) }
     }
 
     static func currentDefaultInputUID() -> String? {
@@ -47,7 +52,7 @@ enum AudioDeviceManager {
     static func inputVolume(uid: String) -> Float? {
         guard let dev = deviceID(forUID: uid) else { return nil }
         // Try master element first
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMaster)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
         if AudioObjectHasProperty(dev, &addr) {
             var vol: Float = 0
             var size = UInt32(MemoryLayout<Float>.size)
@@ -70,7 +75,7 @@ enum AudioDeviceManager {
         guard let dev = deviceID(forUID: uid) else { return false }
         var vol = max(0, min(1, volume))
         // Try master element first
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMaster)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
         if AudioObjectHasProperty(dev, &addr) {
             var size = UInt32(MemoryLayout<Float>.size)
             if AudioObjectSetPropertyData(dev, &addr, 0, nil, size, &vol) == noErr { return true }
@@ -108,13 +113,15 @@ enum AudioDeviceManager {
     static func deviceUID(from deviceID: AudioObjectID) -> String? {
         var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
-        var dev = deviceID
-        var status = AudioObjectGetPropertyDataSize(dev, &addr, 0, nil, &size)
-        guard status == noErr else { return nil }
-        var cfStr: CFString = "" as CFString
-        status = AudioObjectGetPropertyData(dev, &addr, 0, nil, &size, &cfStr)
-        guard status == noErr else { return nil }
-        return cfStr as String
+        var status = AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &size)
+        if status != noErr { return nil }
+        // Retrieve as CFString? via typed pointer to avoid raw pointer diagnostics
+        var cfString: CFString? = nil
+        status = withUnsafeMutablePointer(to: &cfString) { ptr -> OSStatus in
+            return AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, ptr)
+        }
+        guard status == noErr, let cf = cfString else { return nil }
+        return cf as String
     }
 
     static func deviceID(forUID uid: String) -> AudioObjectID? {

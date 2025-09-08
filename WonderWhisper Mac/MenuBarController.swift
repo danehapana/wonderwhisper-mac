@@ -2,31 +2,38 @@ import AppKit
 import Combine
 
 @MainActor
-final class MenuBarController {
+final class MenuBarController: NSObject {
     private let statusItem: NSStatusItem
     private var cancellables: Set<AnyCancellable> = []
     private weak var vm: DictationViewModel?
+    private var addDictItem: NSMenuItem?
 
     init(viewModel: DictationViewModel) {
         self.vm = viewModel
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        super.init()
 
         if let button = statusItem.button {
             button.imagePosition = .imageOnly
-            button.image = Self.letterWImage(color: .labelColor)
+            // Use a single template image and tint for state changes
+            button.image = Self.templateWImage
+            button.contentTintColor = .labelColor
             button.toolTip = "WonderWhisper"
         }
         statusItem.menu = buildMenu()
+        statusItem.menu?.delegate = self
 
         // Observe recording state
         viewModel.$isRecording
             .sink { [weak self] recording in
                 guard let self, let button = self.statusItem.button else { return }
                 let color: NSColor = recording ? .systemRed : .labelColor
-                button.image = Self.letterWImage(color: color)
+                // Swap tint color only; avoid redrawing image
+                button.contentTintColor = color
                 button.toolTip = recording ? "WonderWhisper — Recording" : "WonderWhisper — Idle"
                 // Rebuild to update checkmarks etc. if needed
                 self.statusItem.menu = self.buildMenu()
+                self.statusItem.menu?.delegate = self
             }
             .store(in: &cancellables)
     }
@@ -41,8 +48,9 @@ final class MenuBarController {
 
         let addDict = NSMenuItem(title: "Add to Dictionary", action: #selector(addClipboardToVocabulary), keyEquivalent: "")
         addDict.target = self
-        let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        addDict.isEnabled = !clip.isEmpty
+        // Enable lazily when the menu opens (avoid pasteboard reads on every rebuild)
+        addDict.isEnabled = false
+        self.addDictItem = addDict
         menu.addItem(addDict)
 
         menu.addItem(.separator())
@@ -104,7 +112,9 @@ final class MenuBarController {
         statusItem.menu = buildMenu()
     }
 
-    private static func letterWImage(color: NSColor, size: NSSize = NSSize(width: 18, height: 16)) -> NSImage {
+    // Single cached template image; colored via contentTintColor
+    private static let templateWImage: NSImage = {
+        let size = NSSize(width: 18, height: 16)
         let img = NSImage(size: size)
         img.lockFocus()
         defer { img.unlockFocus() }
@@ -113,13 +123,22 @@ final class MenuBarController {
         let font = NSFont.systemFont(ofSize: 13, weight: .bold)
         let attrs: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: color,
+            .foregroundColor: NSColor.white, // template color, will be tinted
             .paragraphStyle: paragraph
         ]
         let str = NSAttributedString(string: "W", attributes: attrs)
         let rect = NSRect(x: 0, y: (size.height - font.capHeight)/2 - 1, width: size.width, height: font.capHeight + 2)
         str.draw(in: rect)
-        img.isTemplate = false
+        img.isTemplate = true
         return img
+    }()
+}
+
+// MARK: - NSMenuDelegate for lazy enabling
+extension MenuBarController: NSMenuDelegate {
+    func menuWillOpen(_ menu: NSMenu) {
+        // Re-evaluate clipboard only when the menu actually opens
+        let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        addDictItem?.isEnabled = !clip.isEmpty
     }
 }
