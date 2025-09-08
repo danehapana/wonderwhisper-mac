@@ -49,6 +49,11 @@ actor DictationController {
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await aai.feedPCM16(data) }
                     }
+                } else if let dg = transcriber as? DeepgramStreamingProvider {
+                    try await dg.beginRealtime()
+                    try? recorder.startStreamingPCM16 { data in
+                        Task { try? await dg.feedPCM16(data) }
+                    }
                 }
                 state = .recording
                 // Pre-capture screen context early (AX first, OCR fallback)
@@ -71,6 +76,7 @@ actor DictationController {
         guard state == .recording else { return }
         // Stop live streaming if active
         if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
+        if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
         let maybeURL = await recorder.stopRecordingAndWait()
         guard let fileURL = maybeURL else { state = .error("No recording file"); return }
 
@@ -91,6 +97,12 @@ actor DictationController {
                 // Prefer the live session's final transcript for speed
                 transcript = try await aai.endRealtimeSessionAndGetTranscript()
                 // If empty (fallback), run file-based for safety
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else if let dg = transcriber as? DeepgramStreamingProvider {
+                // Prefer Deepgram live session transcript gathered during recording
+                transcript = try await dg.endRealtime()
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }

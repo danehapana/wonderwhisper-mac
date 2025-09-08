@@ -17,6 +17,9 @@ struct AppConfig {
     // Keychain alias for the AssemblyAI API key
     static let assemblyAIAPIKeyAlias = "ASSEMBLYAI_API_KEY"
 
+    // Keychain alias for the Deepgram API key
+    static let deepgramAPIKeyAlias = "DEEPGRAM_API_KEY"
+
     // Networking feature flags
     // Toggle via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_uploads -bool YES
     static var forceHTTP2ForUploads: Bool {

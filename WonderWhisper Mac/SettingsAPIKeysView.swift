@@ -4,6 +4,7 @@ struct SettingsAPIKeysView: View {
     @ObservedObject var vm: DictationViewModel
     @State private var groqKeyInput: String = ""
     @State private var assemblyAIKeyInput: String = ""
+    @State private var deepgramKeyInput: String = ""
 
     var body: some View {
         Form {
@@ -29,6 +30,20 @@ struct SettingsAPIKeysView: View {
                     HStack(spacing: 8) {
                         Button("Save AssemblyAI Key") { vm.saveAssemblyAIKey(assemblyAIKeyInput); assemblyAIKeyInput = "" }
                         Text("Stored as \(AppConfig.assemblyAIAPIKeyAlias)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
+            Section("Deepgram") {
+                VStack(alignment: .leading, spacing: 8) {
+                    SecureField("Deepgram API Key", text: $deepgramKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 420)
+                    HStack(spacing: 8) {
+                        Button("Save Deepgram Key") { vm.saveDeepgramKey(deepgramKeyInput); deepgramKeyInput = "" }
+                        Text("Stored as \(AppConfig.deepgramAPIKeyAlias)")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

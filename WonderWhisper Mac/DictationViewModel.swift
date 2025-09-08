@@ -21,6 +21,7 @@ final class DictationViewModel: ObservableObject {
 
     // API Key inputs (not persisted directly; saved via Keychain on action)
     @Published var assemblyAIKeyInput: String = ""
+    @Published var deepgramKeyInput: String = ""
 
     // Networking
     @Published var transcriptionTimeoutSeconds: Double = {
@@ -227,6 +228,18 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func saveDeepgramKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.deepgramAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+        if transcriptionModel == "deepgram-streaming" {
+            updateProviders()
+        }
+    }
+
     private func updateHotkeys() {
         UserDefaults.standard.set(hotkeySelection.rawValue, forKey: "hotkey.selection")
         hotkeys.selection = hotkeySelection
@@ -266,6 +279,10 @@ final class DictationViewModel: ObservableObject {
             provider = AssemblyAIStreamingProvider(apiKey: key)
             // Endpoint not used by streaming provider, but keep for logging
             tSettings = TranscriptionSettings(endpoint: URL(string: "wss://streaming.assemblyai.com")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
+        } else if transcriptionModel == "deepgram-streaming" {
+            let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
+            provider = DeepgramStreamingProvider(apiKey: key)
+            tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }

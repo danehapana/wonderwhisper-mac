@@ -18,6 +18,7 @@ struct SettingsModelsView: View {
                     Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
                     Text("Parakeet v3 (local)").tag("parakeet-local")
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
+                    Text("Deepgram (Streaming)").tag("deepgram-streaming")
                 }
                 if vm.transcriptionModel.lowercased().contains("parakeet") || vm.transcriptionModel.lowercased().contains("local") {
                     GroupBox("Parakeet Status") {

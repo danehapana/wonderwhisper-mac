@@ -9,6 +9,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
   private var liveTask: URLSessionWebSocketTask?
   private var liveAccumulator: TranscriptAccumulator?
   private var liveReceiveTask: Task<Void, Never>?
+  private var pendingBinaryChunks: [Data] = []
 
   init(apiKey: String) {
     self.apiKey = apiKey
@@ -44,7 +45,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     var request = URLRequest(url: url)
     request.setValue(apiKey, forHTTPHeaderField: "Authorization")
     // Some environments prefer an Origin; harmless to include for compatibility
-    request.setValue("https://assemblyai.com", forHTTPHeaderField: "Origin")
+    request.setValue("https://api.assemblyai.com", forHTTPHeaderField: "Origin")
     let task = session.webSocketTask(with: request)
     task.resume()
 
@@ -55,6 +56,8 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     let receiveTask = Task {
       await self.receiveLoop(task: task, accumulator: transcripts)
     }
+
+    // Do not block: buffer file chunks until Begin
 
     do {
       // Read the file as audio and stream PCM16 frames (binary)
@@ -100,11 +103,16 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     self.liveReceiveTask = Task { [weak self] in
       await self?.receiveLoop(task: task, accumulator: accumulator)
     }
+    // Do not block start; we will buffer and flush when Begin arrives
   }
 
   func feedPCM16(_ data: Data) async throws {
-    guard let task = liveTask else { return }
-    try await task.send(.data(data))
+    guard let task = liveTask, let acc = liveAccumulator else { return }
+    if await acc.hasBegun() {
+      try await task.send(.data(data))
+    } else {
+      pendingBinaryChunks.append(data)
+    }
   }
 
   func endRealtimeSessionAndGetTranscript() async throws -> String {
@@ -141,6 +149,7 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
         switch message {
         case .string(let text):
           await accumulator?.ingest(jsonText: text)
+          if let acc = accumulator { await flushPendingIfReady(task: task, accumulator: acc) }
         case .data:
           break // Not expected
         @unknown default:
@@ -149,6 +158,14 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
       } catch {
         break
       }
+    }
+  }
+
+  private func flushPendingIfReady(task: URLSessionWebSocketTask, accumulator: TranscriptAccumulator) async {
+    guard await accumulator.hasBegun() else { return }
+    while !pendingBinaryChunks.isEmpty {
+      let first = pendingBinaryChunks.removeFirst()
+      try? await task.send(.data(first))
     }
   }
 
@@ -193,7 +210,12 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
           let samples = data[0]
           let bytes = UnsafeBufferPointer(start: samples, count: Int(outputBuffer.frameLength))
           let chunk = Data(buffer: bytes)
-          try await sendAudioChunk(chunk, over: task)
+          if let acc = liveAccumulator { await flushPendingIfReady(task: task, accumulator: acc) }
+          if let acc = liveAccumulator, await acc.hasBegun() {
+            try await sendAudioChunk(chunk, over: task)
+          } else {
+            pendingBinaryChunks.append(chunk)
+          }
           // Maintain ~50ms pacing to mimic realtime
           try await Task.sleep(nanoseconds: 50_000_000)
         }
@@ -213,6 +235,7 @@ private actor TranscriptAccumulator {
   private var segments: [String] = []
   private var lastAppended: String = ""
   private var terminated: Bool = false
+  private var began: Bool = false
 
   func ingest(jsonText: String) {
     guard let data = jsonText.data(using: .utf8),
@@ -231,6 +254,7 @@ private actor TranscriptAccumulator {
           }
         }
       case "Begin":
+        began = true
         break
       case "Termination":
         terminated = true
@@ -256,6 +280,16 @@ private actor TranscriptAccumulator {
       try await Task.sleep(nanoseconds: 100_000_000) // 100ms
     }
   }
+
+  func waitForBegin(timeoutSeconds: Double) async throws {
+    let deadline = Date().addingTimeInterval(timeoutSeconds)
+    while Date() < deadline {
+      if began { return }
+      try await Task.sleep(nanoseconds: 100_000_000) // 100ms
+    }
+  }
+
+  func hasBegun() -> Bool { began }
 }
 
 
