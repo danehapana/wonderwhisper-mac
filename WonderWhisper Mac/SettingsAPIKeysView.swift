@@ -5,6 +5,7 @@ struct SettingsAPIKeysView: View {
     @State private var groqKeyInput: String = ""
     @State private var assemblyAIKeyInput: String = ""
     @State private var deepgramKeyInput: String = ""
+    @State private var openrouterKeyInput: String = ""
 
     var body: some View {
         Form {
@@ -44,6 +45,20 @@ struct SettingsAPIKeysView: View {
                     HStack(spacing: 8) {
                         Button("Save Deepgram Key") { vm.saveDeepgramKey(deepgramKeyInput); deepgramKeyInput = "" }
                         Text("Stored as \(AppConfig.deepgramAPIKeyAlias)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        
+            Section("OpenRouter") {
+                VStack(alignment: .leading, spacing: 8) {
+                    SecureField("OpenRouter API Key", text: $openrouterKeyInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 420)
+                    HStack(spacing: 8) {
+                        Button("Save OpenRouter Key") { vm.saveOpenRouterKey(openrouterKeyInput); openrouterKeyInput = "" }
+                        Text("Stored as \(AppConfig.openrouterAPIKeyAlias)")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

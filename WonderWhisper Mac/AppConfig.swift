@@ -6,6 +6,11 @@ struct AppConfig {
     static let groqAudioTranscriptions = groqBase.appendingPathComponent("audio/transcriptions")
     static let groqChatCompletions = groqBase.appendingPathComponent("chat/completions")
 
+    // OpenRouter base and endpoints (OpenAI-compatible)
+    static let openrouterBase = URL(string: "https://openrouter.ai/api/v1")!
+    static let openrouterChatCompletions = openrouterBase.appendingPathComponent("chat/completions")
+    static let openrouterModels = openrouterBase.appendingPathComponent("models")
+
     // Default model IDs (replace with the exact IDs you use in production)
     // NOTE: Confirm the exact Groq model IDs you intend to use.
     static let defaultTranscriptionModel = "whisper-large-v3-turbo"    // Groq Whisper v3 Turbo
@@ -13,12 +18,18 @@ struct AppConfig {
 
     // Keychain alias for the Groq API key
     static let groqAPIKeyAlias = "GROQ_API_KEY"
+    // Keychain alias for the OpenRouter API key
+    static let openrouterAPIKeyAlias = "OPENROUTER_API_KEY"
 
     // Keychain alias for the AssemblyAI API key
     static let assemblyAIAPIKeyAlias = "ASSEMBLYAI_API_KEY"
 
     // Keychain alias for the Deepgram API key
     static let deepgramAPIKeyAlias = "DEEPGRAM_API_KEY"
+
+    // OpenRouter header defaults
+    static let openrouterTitle = "WonderWhisper Mac"
+    static let openrouterReferer = "https://wonderwhisper.app"
 
     // Networking feature flags
     // Toggle via: defaults write com.slumdev88.wonderwhisper.WonderWhisper-Mac network.force_http2_uploads -bool YES

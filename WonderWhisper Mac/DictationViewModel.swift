@@ -19,6 +19,10 @@ final class DictationViewModel: ObservableObject {
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
+    // LLM provider selection: "groq" (default) or "openrouter"
+    @Published var llmProvider: String = UserDefaults.standard.string(forKey: "llm.provider") ?? "groq" { didSet { persistAndUpdate() } }
+    // OpenRouter routing preference: "latency" or "throughput"
+    @Published var openrouterRouting: String = UserDefaults.standard.string(forKey: "llm.openrouter.routing") ?? "latency" { didSet { persistAndUpdate() } }
     @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
         didSet {
             UserDefaults.standard.set(llmStreaming, forKey: "llm.streaming")
@@ -117,7 +121,7 @@ final class DictationViewModel: ObservableObject {
             transcriberSettings = TranscriptionSettings(endpoint: URL(string: "https://streaming.assemblyai.com")!, model: persistedTranscriptionModel, timeout: 180)
         }
 
-        let llm = GroqLLMProvider(client: http)
+        var llm: LLMProvider = GroqLLMProvider(client: http)
         // Pre-warm chat endpoint to reduce cold-start latency
         GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
         // Initialize prompts: use persisted systemPrompt if set; otherwise seed with the default system template
@@ -126,7 +130,7 @@ final class DictationViewModel: ObservableObject {
         self.userPrompt = UserDefaults.standard.string(forKey: "llm.userMessage") ?? ""
 
         let renderedInitial = PromptBuilder.renderSystemPrompt(template: initialSystem, customVocabulary: persistedVocabCustom)
-        let llmSettings = LLMSettings(
+        var llmSettings = LLMSettings(
             endpoint: AppConfig.groqChatCompletions,
             model: persistedLLMModel,
             systemPrompt: renderedInitial,
@@ -256,6 +260,15 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    func saveOpenRouterKey(_ value: String) {
+        let kc = KeychainService()
+        do { try kc.setSecret(value, forKey: AppConfig.openrouterAPIKeyAlias) } catch {
+            #if DEBUG
+            print("Keychain error: \(error)")
+            #endif
+        }
+    }
+
     func saveDeepgramKey(_ value: String) {
         let kc = KeychainService()
         do { try kc.setSecret(value, forKey: AppConfig.deepgramAPIKeyAlias) } catch {
@@ -288,6 +301,8 @@ final class DictationViewModel: ObservableObject {
         UserDefaults.standard.set(transcriptionModel, forKey: "transcription.model")
         UserDefaults.standard.set(llmEnabled, forKey: "llm.enabled")
         UserDefaults.standard.set(llmModel, forKey: "llm.model")
+        UserDefaults.standard.set(llmProvider, forKey: "llm.provider")
+        UserDefaults.standard.set(openrouterRouting, forKey: "llm.openrouter.routing")
         UserDefaults.standard.set(vocabCustom, forKey: "vocab.custom")
         UserDefaults.standard.set(vocabSpelling, forKey: "vocab.spelling")
         UserDefaults.standard.set(systemPrompt, forKey: "llm.systemPrompt")
@@ -320,10 +335,21 @@ final class DictationViewModel: ObservableObject {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
-        let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+        var lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+
+        // Choose LLM provider and endpoint
+        var llmProviderInstance: LLMProvider = GroqLLMProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+        if llmProvider.lowercased() == "openrouter" {
+            lSettings = LLMSettings(endpoint: AppConfig.openrouterChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
+            // Pre-warm OpenRouter endpoint for better latency
+            GroqHTTPClient.preWarmConnection(to: AppConfig.openrouterChatCompletions)
+            llmProviderInstance = OpenRouterLLMProvider(client: OpenRouterHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.openrouterAPIKeyAlias) }))
+        }
+
         Task {
             if let p = provider { await controller.updateTranscriberProvider(p) }
             await controller.updateTranscriberSettings(tSettings)
+            await controller.updateLLMProvider(llmProviderInstance)
             await controller.updateLLMSettings(lSettings)
             await controller.updateLLMEnabled(llmEnabled)
         }

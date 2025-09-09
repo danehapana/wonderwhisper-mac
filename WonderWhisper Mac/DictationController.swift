@@ -266,6 +266,7 @@ actor DictationController {
     func updateLLMSettings(_ s: LLMSettings) { self.llmSettings = s }
     func updateLLMEnabled(_ enabled: Bool) { self.llmEnabled = enabled }
     func updateTranscriberProvider(_ p: TranscriptionProvider) { self.transcriber = p }
+    func updateLLMProvider(_ p: LLMProvider) { self.llm = p }
 
     // Explicit controls for UI actions
     func finish(userPrompt: String) async {
