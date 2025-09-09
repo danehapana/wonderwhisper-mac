@@ -1,6 +1,9 @@
 import Foundation
+import OSLog
+import os.signpost
 
 actor DictationController {
+    private let spLog = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Dictation-SP")
     enum State: Equatable { case idle, recording, transcribing, processing, inserting, error(String) }
     private(set) var state: State = .idle
 
@@ -92,6 +95,9 @@ actor DictationController {
         
         var recordingFileURL: URL? = nil // Track the file URL for history - defined at function scope
         
+        let pipeId = OSSignpostID(log: spLog)
+        os_signpost(.begin, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
+        
         do {
             let overallStart = Date()
             state = .transcribing
@@ -99,6 +105,7 @@ actor DictationController {
             var transcript: String = ""
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
             
+            os_signpost(.begin, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
             // Handle streaming providers first
             if let aai = transcriber as? AssemblyAIStreamingProvider {
                 // Prefer the live session's final transcript for speed
@@ -138,6 +145,7 @@ actor DictationController {
             }
             let transcribeDT = Date().timeIntervalSince(t0)
             AppLog.dictation.log("Transcription done in \(transcribeDT, format: .fixed(precision: 3))s")
+            os_signpost(.end, log: spLog, name: "WW.file.transcribe", signpostID: pipeId)
 
             var output = transcript
             var llmDT: TimeInterval = 0
@@ -169,11 +177,13 @@ actor DictationController {
                 // Capture full user message for history
                 userMsgForHistory = userMsg
                 AppLog.dictation.log("LLM processing start")
+                os_signpost(.begin, log: spLog, name: "WW.llm.process", signpostID: pipeId)
                 let t1 = Date()
                 do {
                     output = try await llm.process(text: userMsg, userPrompt: userPrompt, settings: llmSettings)
                     llmDT = Date().timeIntervalSince(t1)
                     AppLog.dictation.log("LLM processing done in \(llmDT, format: .fixed(precision: 3))s")
+                    os_signpost(.end, log: spLog, name: "WW.llm.process", signpostID: pipeId)
                 } catch {
                     let ns = error as NSError
                     AppLog.dictation.error("LLM error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code)")
@@ -193,7 +203,9 @@ actor DictationController {
             output = output.trimmingCharacters(in: .whitespacesAndNewlines) + " "
 
             state = .inserting
+            os_signpost(.begin, log: spLog, name: "WW.insert.total", signpostID: pipeId)
             inserter.insert(output)
+            os_signpost(.end, log: spLog, name: "WW.insert.total", signpostID: pipeId)
 
             state = .idle
 
@@ -220,6 +232,7 @@ actor DictationController {
         } catch {
             let ns = error as NSError
             AppLog.dictation.error("Pipeline error: \(ns.localizedDescription) domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+            os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
             // Persist audio so the user can reprocess later even on failure
             let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
             await history?.append(
@@ -244,6 +257,7 @@ actor DictationController {
         // Reset pre-captured context for the next run
         preCapturedScreenText = nil
         preCapturedScreenMethod = nil
+        os_signpost(.end, log: spLog, name: "WW.pipeline.total", signpostID: pipeId)
     }
 
     func currentState() -> State { state }

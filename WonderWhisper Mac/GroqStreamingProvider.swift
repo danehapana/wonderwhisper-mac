@@ -19,6 +19,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
     private var currentSettings: TranscriptionSettings?
     private let uploadQueue = DispatchQueue(label: "groq.upload.queue", qos: .userInitiated)
     private let uploads = UploadTaskBag()
+    private let limiter = RateLimiter(max: 4)
 
     // Serialize audio buffering/chunking to avoid data races
     private let chunker: Chunker
@@ -123,6 +124,8 @@ final class GroqStreamingProvider: TranscriptionProvider {
         for (number, payload) in ready {
             AppLog.dictation.log("GroqStreaming: Queuing chunk \(number) with \(payload.count) bytes")
             let uploadTask = Task { [weak self, weak acc] in
+                await self?.limiter.acquire()
+                defer { Task { await self?.limiter.release() } }
                 await self?.uploadChunk(payload, chunkNumber: number, accumulator: acc)
                 return ()
             }
@@ -141,8 +144,12 @@ final class GroqStreamingProvider: TranscriptionProvider {
         AppLog.dictation.log("GroqStreaming: Ending streaming session")
         isStreaming = false
 
-        // Cancel any pending uploads first (thread-safe)
-        await uploads.cancelAll()
+        // Prefer allowing in-flight uploads to finish (bounded by limiter max)
+        let waitStart = Date()
+        while await limiter.current() > 0 {
+            if Date().timeIntervalSince(waitStart) > 2.0 { break }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
 
         // Upload any remaining audio in buffer as final chunk if we have meaningful data
         if let remainder = await chunker.flushRemainder(minBytes: 1000) { // ~60ms threshold
@@ -341,4 +348,19 @@ private actor UploadTaskBag {
         for t in tasks { t.cancel() }
         tasks.removeAll()
     }
+}
+
+// Simple async rate limiter for bounding in-flight uploads
+private actor RateLimiter {
+    private let max: Int
+    private var inFlight: Int = 0
+    init(max: Int) { self.max = max }
+    func acquire() async {
+        while inFlight >= max {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        inFlight += 1
+    }
+    func release() { inFlight = Swift.max(0, inFlight - 1) }
+    func current() -> Int { inFlight }
 }

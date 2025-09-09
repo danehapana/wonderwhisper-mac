@@ -1,9 +1,11 @@
 import Foundation
 import OSLog
 import Compression
+import os.signpost
 
 struct GroqHTTPClient {
     let apiKeyProvider: () -> String?
+    static let spLog = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Network-SP")
 
     // Connection pre-warming for faster subsequent requests
     static func preWarmConnection(to url: URL) {
@@ -210,6 +212,8 @@ struct GroqHTTPClient {
         let start = Date()
         let reqId = UUID().uuidString
         AppLog.network.log("POST Multipart [\(context ?? "-")] to \(url.absoluteString, privacy: .public) with \(files.count) file(s) req=\(reqId)")
+        let totalBytes = files.reduce(0) { $0 + $1.data.count }
+        os_signpost(.event, log: Self.spLog, name: "WW.net.upload.prepare", "req=%{public}@ bytes=%{public}ld files=%{public}ld", reqId, totalBytes, files.count)
         let boundary = "Boundary-\(UUID().uuidString)"
         var body = Data()
         // Pre-reserve capacity to minimize reallocations during multipart assembly
@@ -370,13 +374,28 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
     var lastError: Error?
     while attempt < maxAttempts {
         attempt += 1
+        let spId = OSSignpostID(log: GroqHTTPClient.spLog)
+        os_signpost(.begin, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId, "attempt=%ld ctx=%{public}@ path=%{public}@", attempt, context ?? "-", request.url?.lastPathComponent ?? "<url>")
         do {
             let (data, response) = try await dataWithAttemptTimeout(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                AppLog.network.error("HTTP \(http.statusCode) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                let status = http.statusCode
+                if status == 429 {
+                    var delay: Double = 1.0
+                    if let ra = http.value(forHTTPHeaderField: "Retry-After"), let seconds = Double(ra) {
+                        delay = max(0.1, min(10.0, seconds))
+                    }
+                    AppLog.network.error("HTTP 429 for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) retrying in \(delay, format: .fixed(precision: 2))s")
+                    os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    // continue loop (retry)
+                    continue
+                }
+                AppLog.network.error("HTTP \(status) for \(request.url?.absoluteString ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+                throw ProviderError.http(status: status, body: String(data: data, encoding: .utf8) ?? "<no body>")
             }
             AppLog.network.log("OK \(((response as? HTTPURLResponse)?.statusCode ?? -1)) for \(request.url?.lastPathComponent ?? "<url>", privacy: .public) attempt=\(attempt) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+            os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
             return data
         } catch {
             lastError = error
@@ -386,6 +405,7 @@ private func performWithRetry(request: URLRequest, start: Date, context: String?
             AppLog.network.error("Attempt \(attempt) failed req=\(request.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?") ctx=\(context ?? "-") error=\(nsErr.localizedDescription)")
             // Retry only on timeout and a couple transient network errors; also retry 429 via header parsing earlier
             let shouldRetry = (domain == NSURLErrorDomain) && (code == NSURLErrorTimedOut || code == NSURLErrorNetworkConnectionLost || code == NSURLErrorCannotFindHost || code == NSURLErrorCannotConnectToHost)
+            os_signpost(.end, log: GroqHTTPClient.spLog, name: "WW.net.request", signpostID: spId)
             if attempt >= maxAttempts || !shouldRetry { break }
             // Exponential backoff with jitter
             let base: Double = 0.6
