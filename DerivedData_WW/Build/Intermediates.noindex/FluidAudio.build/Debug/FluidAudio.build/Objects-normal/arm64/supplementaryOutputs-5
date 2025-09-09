@@ -1,0 +1,18 @@
+"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/StreamingAsrManager.swift":
+  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrManager.d"
+  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrManager.o"
+  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrManager.swiftconstvalues"
+  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrManager.swiftdeps"
+  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrManager.dia"
+"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/StreamingAsrSession.swift":
+  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrSession.dia"
+  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrSession.o"
+  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrSession.swiftdeps"
+  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrSession.d"
+  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/StreamingAsrSession.swiftconstvalues"
+"/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/SourcePackages/checkouts/FluidAudio/Sources/FluidAudio/ASR/PerformanceMetrics.swift":
+  diagnostics: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.dia"
+  dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.d"
+  const-values: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.swiftconstvalues"
+  swift-dependencies: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.swiftdeps"
+  object: "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/DerivedData_WW/Build/Intermediates.noindex/FluidAudio.build/Debug/FluidAudio.build/Objects-normal/arm64/PerformanceMetrics.o"

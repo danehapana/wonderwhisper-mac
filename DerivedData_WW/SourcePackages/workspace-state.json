@@ -1,0 +1,30 @@
+{
+  "object" : {
+    "artifacts" : [
+
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "fluidaudio",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/FluidInference/FluidAudio",
+          "name" : "FluidAudio"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "8cc38d7d055f521c0b05bd6ba217bca66108efc1",
+            "version" : "0.3.0"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "FluidAudio"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

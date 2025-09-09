@@ -1,0 +1,56 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsPromptsView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "System prompt",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 9
+        }
+      },
+      {
+        "comment": "",
+        "key": "User prompt",
+        "location": {
+          "startingColumn": 26,
+          "startingLine": 24
+        }
+      },
+      {
+        "comment": "",
+        "key": "Sent as the LLM system role. Placeholder: <VOCABULARY/> auto-fills from settings.",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 16
+        }
+      },
+      {
+        "comment": "",
+        "key": "Reset to Default",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 15
+        }
+      },
+      {
+        "comment": "",
+        "key": "Appends as an extra user message after transcript context.",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Clear",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 30
+        }
+      }
+    ]
+  },
+  "version": 1
+}

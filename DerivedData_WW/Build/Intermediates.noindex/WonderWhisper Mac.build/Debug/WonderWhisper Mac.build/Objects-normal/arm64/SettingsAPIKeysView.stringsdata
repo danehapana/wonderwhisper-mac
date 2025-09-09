@@ -1,0 +1,104 @@
+{
+  "source": "/Users/danekapoor/Development/WonderWhisper Mac/WonderWhisper Mac/WonderWhisper Mac/SettingsAPIKeysView.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "Groq",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 11
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 25
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram",
+        "location": {
+          "startingColumn": 21,
+          "startingLine": 39
+        }
+      },
+      {
+        "comment": "",
+        "key": "Groq API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 13
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 18
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Groq Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 17
+        }
+      },
+      {
+        "comment": "",
+        "key": "AssemblyAI API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 27
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 32
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save AssemblyAI Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 31
+        }
+      },
+      {
+        "comment": "",
+        "key": "Deepgram API Key",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 41
+        }
+      },
+      {
+        "comment": "",
+        "key": "Stored as %@",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 46
+        }
+      },
+      {
+        "comment": "",
+        "key": "Save Deepgram Key",
+        "location": {
+          "startingColumn": 32,
+          "startingLine": 45
+        }
+      }
+    ]
+  },
+  "version": 1
+}
