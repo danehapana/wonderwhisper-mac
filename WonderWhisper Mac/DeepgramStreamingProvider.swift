@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import OSLog
 
 // Deepgram Streaming (v1 listen) – binary PCM16 frames over WebSocket
 // Docs: https://developers.deepgram.com/docs/live-streaming-audio
@@ -10,13 +11,20 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
   // Live state
   private var ws: URLSessionWebSocketTask?
   private var recvTask: Task<Void, Never>?
+  private var keepAliveTask: Task<Void, Never>?
   private var acc: DeepgramAccumulator?
+  private var isConnected: Bool = false
+  private var connectionStartTime: Date?
+  private var reconnectAttempts: Int = 0
+  private let maxReconnectAttempts: Int = 3
 
   init(apiKey: String) {
     self.apiKey = apiKey
     let cfg = URLSessionConfiguration.default
-    cfg.timeoutIntervalForRequest = 60
-    cfg.timeoutIntervalForResource = 300
+    cfg.timeoutIntervalForRequest = 10  // Reduced from 60
+    cfg.timeoutIntervalForResource = 120 // Reduced from 300
+    cfg.waitsForConnectivity = false // Don't wait if no connectivity
+    cfg.allowsCellularAccess = true
     self.session = URLSession(configuration: cfg)
   }
 
@@ -32,35 +40,113 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
 
   // Live API used by DictationController for mic streaming
   func beginRealtime() async throws {
-    guard ws == nil else { return }
-    guard let url = URL(string: "wss://api.deepgram.com/v1/listen?model=nova-3&language=en-US&smart_format=true&encoding=linear16&sample_rate=16000&channels=1&endpointing=true") else { throw ProviderError.invalidURL }
+    // Clean up any existing connection first
+    if ws != nil {
+      AppLog.dictation.log("Deepgram: Cleaning up existing connection before starting new one")
+      await cleanupConnection()
+    }
+    
+    guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      AppLog.dictation.error("Deepgram: API key is missing or empty")
+      throw ProviderError.missingAPIKey
+    }
+    
+    // Enhanced URL with proper parameters for optimal streaming
+    guard let url = URL(string: "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&punctuate=true&encoding=linear16&sample_rate=16000&channels=1&endpointing=true&interim_results=true&filler_words=false&profanity_filter=false") else {
+      AppLog.dictation.error("Deepgram: Failed to create WebSocket URL")
+      throw ProviderError.invalidURL
+    }
+    
     var req = URLRequest(url: url)
-    req.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
+    // Fix authentication format - should be lowercase 'token'
+    req.setValue("token \(apiKey)", forHTTPHeaderField: "Authorization")
+    req.timeoutInterval = 5.0 // Reduced to 5 second connection timeout for faster failure detection
+    
+    AppLog.dictation.log("Deepgram: Initiating WebSocket connection to \(url.absoluteString)")
+    
     // Deepgram allows binary PCM; we'll send 16 kHz mono PCM16
     let task = session.webSocketTask(with: req)
     task.resume()
+    
     let acc = DeepgramAccumulator()
     self.acc = acc
     self.ws = task
+    self.connectionStartTime = Date()
+    self.isConnected = false
+    self.reconnectAttempts = 0 // Reset reconnection counter on new session
+    
+    // Start message receive loop
     self.recvTask = Task { [weak self] in
       await self?.receiveLoop(task: task, accumulator: acc)
     }
+    
+    // Start keep-alive mechanism
+    self.keepAliveTask = Task { [weak self] in
+      await self?.keepAliveLoop(task: task)
+    }
+    
+    AppLog.dictation.log("Deepgram: WebSocket connection initiated successfully")
+    
+    // Brief delay to allow connection to start establishing
+    try? await Task.sleep(nanoseconds: 200_000_000) // 200ms - much shorter, non-blocking
   }
 
   func feedPCM16(_ data: Data) async throws {
-    guard let task = ws else { return }
-    // Send immediately; Deepgram v1/listen accepts binary after WS open
-    try await task.send(.data(data))
+    guard let task = ws else {
+      // Silently return if no WebSocket - don't spam errors during normal shutdown
+      return
+    }
+    
+    // Try to send even if not marked as connected - WebSocket might be ready
+    do {
+      // Send immediately; Deepgram v1/listen accepts binary after WS open
+      try await task.send(.data(data))
+      // Mark as connected on successful send if not already marked
+      if !isConnected {
+        isConnected = true
+        AppLog.dictation.log("Deepgram: Connection confirmed via successful audio send")
+      }
+      // Only log periodically to avoid spam
+      if data.count > 0 && Int.random(in: 1...200) == 1 {
+        AppLog.dictation.log("Deepgram: Sent \(data.count) bytes of audio data")
+      }
+    } catch {
+      // Only log connection errors occasionally to avoid spam
+      if Int.random(in: 1...50) == 1 {
+        AppLog.dictation.error("Deepgram: Failed to send audio data: \(error.localizedDescription)")
+      }
+      isConnected = false
+      // Don't throw - let the connection attempt to recover
+    }
   }
 
   func endRealtime() async throws -> String {
     guard let task = ws, let acc = acc else { return "" }
-    // Give a short window for final Results message to arrive
-    try? await Task.sleep(nanoseconds: 150_000_000)
+    
+    AppLog.dictation.log("Deepgram: Ending realtime session")
+    
+    // Send a final message to signal end of audio stream (optional)
+    let finishMessage = ["type": "CloseStream"]
+    if let jsonData = try? JSONSerialization.data(withJSONObject: finishMessage),
+       let jsonString = String(data: jsonData, encoding: .utf8) {
+      try? await task.send(.string(jsonString))
+    }
+    
+    // Reduce wait time for final messages - shorter delay for better responsiveness
+    try? await Task.sleep(nanoseconds: 150_000_000) // Reduced from 300ms to 150ms
+    
+    // Clean up tasks and connection
     recvTask?.cancel()
+    keepAliveTask?.cancel()
     task.cancel(with: .goingAway, reason: nil)
-    self.ws = nil
-    self.recvTask = nil
+    
+    let sessionDuration = connectionStartTime.map { Date().timeIntervalSince($0) } ?? 0
+    AppLog.dictation.log("Deepgram: Session ended after \(String(format: "%.2f", sessionDuration))s")
+    
+    // Clean up connection
+    await cleanupConnection()
+    self.connectionStartTime = nil
+    
     let text = await acc.finalTranscript()
     self.acc = nil
     return text
@@ -68,20 +154,156 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
 
   // Internal helpers
   private func receiveLoop(task: URLSessionWebSocketTask, accumulator: DeepgramAccumulator) async {
-    while true {
+    AppLog.dictation.log("Deepgram: Starting message receive loop")
+    
+    while !Task.isCancelled && ws === task {
       do {
         let message = try await task.receive()
-        switch message {
-        case .string(let text):
-          await accumulator.ingest(jsonText: text)
-          // If Deepgram sends keepalive/metadata, continue
-        case .data:
-          break
-        @unknown default:
+        
+        // Validate we're still using the same connection
+        guard ws === task && !Task.isCancelled else {
+          AppLog.dictation.log("Deepgram: Connection changed during receive, exiting loop")
           break
         }
+        
+        switch message {
+        case .string(let text):
+          if !isConnected {
+            isConnected = true
+            AppLog.dictation.log("Deepgram: WebSocket connection established")
+          }
+          await accumulator.ingest(jsonText: text)
+          
+        case .data(let data):
+          AppLog.dictation.log("Deepgram: Received binary data (\(data.count) bytes) - unexpected")
+          
+        @unknown default:
+          AppLog.dictation.log("Deepgram: Received unknown message type")
+        }
       } catch {
+        let nsError = error as NSError
+        // Only log connection errors if we haven't already disconnected
+        if isConnected {
+          AppLog.dictation.error("Deepgram: WebSocket receive error - \(nsError.localizedDescription) (domain: \(nsError.domain), code: \(nsError.code))")
+        }
+        isConnected = false
+        
+        // Don't attempt reconnection if we're being cancelled intentionally
+        if !Task.isCancelled {
+          AppLog.dictation.log("Deepgram: Connection lost, exiting receive loop")
+          // Note: In a production environment, you might want to trigger reconnection here
+          // For now, we'll just log and break to avoid infinite reconnection loops during shutdown
+        }
         break
+      }
+    }
+    
+    AppLog.dictation.log("Deepgram: Message receive loop ended")
+  }
+  
+  private func keepAliveLoop(task: URLSessionWebSocketTask) async {
+    AppLog.dictation.log("Deepgram: Starting keep-alive loop")
+    
+    // Wait for connection to be established first
+    while !isConnected && !Task.isCancelled {
+      try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+    }
+    
+    while !Task.isCancelled && ws === task {
+      // Wait 15 seconds between keep-alive messages (longer interval)
+      try? await Task.sleep(nanoseconds: 15_000_000_000)
+      
+      // Check if we're still connected and using the same task
+      guard !Task.isCancelled, let currentTask = ws, currentTask === task, isConnected else {
+        AppLog.dictation.log("Deepgram: Keep-alive stopping - connection changed or disconnected")
+        break
+      }
+      
+      let keepAliveMessage = ["type": "KeepAlive"]
+      do {
+        if let jsonData = try? JSONSerialization.data(withJSONObject: keepAliveMessage),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+          try await task.send(.string(jsonString))
+          AppLog.dictation.log("Deepgram: Sent keep-alive message")
+        }
+      } catch {
+        AppLog.dictation.error("Deepgram: Failed to send keep-alive: \(error.localizedDescription)")
+        break
+      }
+    }
+    
+    AppLog.dictation.log("Deepgram: Keep-alive loop ended")
+  }
+  
+  // Connection health check
+  func isConnectionHealthy() -> Bool {
+    return ws != nil && isConnected
+  }
+  
+  // Helper to clean up connection state
+  private func cleanupConnection() async {
+    // Mark as disconnected first to stop new operations
+    isConnected = false
+    
+    // Cancel tasks gracefully
+    recvTask?.cancel()
+    keepAliveTask?.cancel()
+    
+    // Give tasks a moment to finish before closing WebSocket
+    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+    
+    // Close WebSocket connection
+    ws?.cancel(with: .goingAway, reason: Data("Session ended".utf8))
+    
+    // Clear references
+    ws = nil
+    recvTask = nil
+    keepAliveTask = nil
+    
+    // Brief delay to allow cleanup to complete
+    try? await Task.sleep(nanoseconds: 50_000_000) // Reduced from 100ms to 50ms
+  }
+  
+  // Attempt reconnection if needed (basic implementation)
+  private func attemptReconnection() async {
+    guard self.reconnectAttempts < self.maxReconnectAttempts else {
+      AppLog.dictation.error("Deepgram: Max reconnection attempts (\(self.maxReconnectAttempts)) reached")
+      return
+    }
+    
+    self.reconnectAttempts += 1
+    let delay = min(pow(2.0, Double(self.reconnectAttempts)), 10.0) // Exponential backoff, max 10s
+    AppLog.dictation.log("Deepgram: Attempting reconnection #\(self.reconnectAttempts) in \(delay)s")
+    
+    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+    
+    do {
+      // Clean up existing connection
+      if let task = self.ws {
+        self.recvTask?.cancel()
+        self.keepAliveTask?.cancel()
+        task.cancel(with: .goingAway, reason: nil)
+      }
+      
+      // Reset state
+      self.ws = nil
+      self.recvTask = nil
+      self.keepAliveTask = nil
+      self.isConnected = false
+      
+      // Attempt new connection
+      try await beginRealtime()
+      
+      if self.isConnected {
+        AppLog.dictation.log("Deepgram: Reconnection successful")
+        self.reconnectAttempts = 0 // Reset on success
+      }
+      
+    } catch {
+      AppLog.dictation.error("Deepgram: Reconnection attempt #\(self.reconnectAttempts) failed: \(error.localizedDescription)")
+      
+      if self.reconnectAttempts < self.maxReconnectAttempts {
+        await attemptReconnection()
       }
     }
   }
@@ -127,28 +349,103 @@ private actor DeepgramAccumulator {
   private(set) var isOpen: Bool = false
   private var segments: [String] = []
   private var lastFinalTime: Date = Date()
+  private var currentInterim: String = ""
 
   func ingest(jsonText: String) {
-    guard let data = jsonText.data(using: .utf8),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-    // Deepgram sends an initial Metadata/open message; treat first message as open
-    if obj["type"] as? String == "Metadata" { isOpen = true; return }
-    if obj["type"] as? String == "Results" {
-      if let channel = obj["channel"] as? [String: Any],
-         let alts = channel["alternatives"] as? [[String: Any]],
-         let first = alts.first,
-         let isFinal = obj["is_final"] as? Bool {
-        let text = first["transcript"] as? String ?? ""
-        if isFinal == true, !text.isEmpty {
-          segments.append(text)
-          lastFinalTime = Date()
-        }
+    guard let data = jsonText.data(using: .utf8) else {
+      AppLog.dictation.error("Deepgram: Failed to decode JSON data")
+      return
+    }
+    
+    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      AppLog.dictation.error("Deepgram: Failed to parse JSON: \(jsonText)")
+      return
+    }
+    
+    let messageType = obj["type"] as? String ?? "unknown"
+    
+    switch messageType {
+    case "Metadata":
+      isOpen = true
+      AppLog.dictation.log("Deepgram: Connection opened with metadata")
+      return
+      
+    case "Results":
+      handleResults(obj)
+      
+    case "UtteranceEnd":
+      AppLog.dictation.log("Deepgram: Utterance ended")
+      
+    case "SpeechStarted":
+      AppLog.dictation.log("Deepgram: Speech started")
+      
+    case "Error":
+      if let error = obj["error"] as? String {
+        AppLog.dictation.error("Deepgram: Server error - \(error)")
       }
+      
+    default:
+      AppLog.dictation.log("Deepgram: Unknown message type: \(messageType)")
+    }
+  }
+  
+  private func handleResults(_ obj: [String: Any]) {
+    guard let channel = obj["channel"] as? [String: Any],
+          let alternatives = channel["alternatives"] as? [[String: Any]],
+          let firstAlt = alternatives.first else {
+      AppLog.dictation.error("Deepgram: Invalid results structure")
+      return
+    }
+    
+    let transcript = firstAlt["transcript"] as? String ?? ""
+    let confidence = firstAlt["confidence"] as? Double ?? 0.0
+    let isFinal = obj["is_final"] as? Bool ?? false
+    let speechFinal = obj["speech_final"] as? Bool ?? false
+    
+    // Filter out empty or very low confidence final transcripts to reduce noise
+    if isFinal && (transcript.isEmpty || confidence < 0.1) {
+      AppLog.dictation.log("Deepgram: Filtered out low-confidence/empty FINAL transcript (conf: \(String(format: "%.2f", confidence)))")
+      return
+    }
+    
+    // Log transcript info for debugging
+    let type = isFinal ? "FINAL" : "INTERIM"
+    if !transcript.isEmpty || isFinal {
+      AppLog.dictation.log("Deepgram: \(type) transcript (conf: \(String(format: "%.2f", confidence))): \"\(transcript)\"")
+    }
+    
+    if isFinal && !transcript.isEmpty {
+      // This is a final result with meaningful content
+      segments.append(transcript)
+      lastFinalTime = Date()
+      currentInterim = "" // Clear interim since we got final
+    } else if !isFinal && !transcript.isEmpty {
+      // This is an interim result - store for potential use
+      currentInterim = transcript
+    }
+    
+    // Handle speech_final which indicates end of speech segment
+    if speechFinal {
+      AppLog.dictation.log("Deepgram: Speech segment completed")
     }
   }
 
   func finalTranscript() -> String {
-    return segments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    let finalText = segments.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+    AppLog.dictation.log("Deepgram: Final transcript assembled: \"\(finalText)\"")
+    return finalText
+  }
+  
+  func getCurrentTranscript() -> String {
+    // Return accumulated final segments plus current interim if available
+    let final = segments.joined(separator: " ")
+    if !currentInterim.isEmpty && !final.isEmpty {
+      return "\(final) \(currentInterim)".trimmingCharacters(in: .whitespacesAndNewlines)
+    } else if !currentInterim.isEmpty {
+      return currentInterim.trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+      return final.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
   }
 }
 

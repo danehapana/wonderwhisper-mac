@@ -6,6 +6,7 @@ public enum ProviderError: Error, LocalizedError {
     case http(status: Int, body: String)
     case decodingFailed
     case notImplemented
+    case networkError(String)
 
     public var errorDescription: String? {
         switch self {
@@ -14,6 +15,7 @@ public enum ProviderError: Error, LocalizedError {
         case .http(let status, let body): return "HTTP error (\(status)): \(body)"
         case .decodingFailed: return "Response decoding failed"
         case .notImplemented: return "Not implemented"
+        case .networkError(let message): return "Network error: \(message)"
         }
     }
 }
