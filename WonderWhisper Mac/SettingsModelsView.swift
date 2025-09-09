@@ -71,6 +71,7 @@ struct SettingsModelsView: View {
                 Toggle("Post-processing with LLM", isOn: $vm.llmEnabled)
                 Picker("LLM model", selection: $vm.llmModel) {
                     Text("moonshotai/kimi-k2-instruct").tag("moonshotai/kimi-k2-instruct")
+                    Text("moonshotai/kimi-k2-instruct-0905").tag("moonshotai/kimi-k2-instruct-0905")
                     Text("openai/gpt-oss-120b").tag("openai/gpt-oss-120b")
                     Text("meta-llama/llama-4-scout-17b-16e-instruct").tag("meta-llama/llama-4-scout-17b-16e-instruct")
                 }
