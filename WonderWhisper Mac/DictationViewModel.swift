@@ -18,6 +18,12 @@ final class DictationViewModel: ObservableObject {
     @Published var transcriptionModel: String = UserDefaults.standard.string(forKey: "transcription.model") ?? AppConfig.defaultTranscriptionModel { didSet { persistAndUpdate() } }
     @Published var llmEnabled: Bool = UserDefaults.standard.object(forKey: "llm.enabled") as? Bool ?? true { didSet { persistAndUpdate() } }
     @Published var llmModel: String = UserDefaults.standard.string(forKey: "llm.model") ?? AppConfig.defaultLLMModel { didSet { persistAndUpdate() } }
+    @Published var llmStreaming: Bool = UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false {
+        didSet {
+            UserDefaults.standard.set(llmStreaming, forKey: "llm.streaming")
+            updateProviders()
+        }
+    }
 
     // API Key inputs (not persisted directly; saved via Keychain on action)
     @Published var assemblyAIKeyInput: String = ""
@@ -108,6 +114,8 @@ final class DictationViewModel: ObservableObject {
         }
 
         let llm = GroqLLMProvider(client: http)
+        // Pre-warm chat endpoint to reduce cold-start latency
+        GroqHTTPClient.preWarmConnection(to: AppConfig.groqChatCompletions)
         // Initialize prompts: use persisted systemPrompt if set; otherwise seed with the default system template
         let initialSystem = UserDefaults.standard.string(forKey: "llm.systemPrompt") ?? AppConfig.defaultSystemPromptTemplate
         self.systemPrompt = initialSystem
@@ -118,7 +126,8 @@ final class DictationViewModel: ObservableObject {
             endpoint: AppConfig.groqChatCompletions,
             model: persistedLLMModel,
             systemPrompt: renderedInitial,
-            timeout: 60
+            timeout: 60,
+            streaming: UserDefaults.standard.object(forKey: "llm.streaming") as? Bool ?? false
         )
 
         let recorder = AudioRecorder()
@@ -287,7 +296,7 @@ final class DictationViewModel: ObservableObject {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }
         let renderedSystem = PromptBuilder.renderSystemPrompt(template: systemPrompt, customVocabulary: vocabCustom)
-        let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60)
+        let lSettings = LLMSettings(endpoint: AppConfig.groqChatCompletions, model: llmModel, systemPrompt: renderedSystem, timeout: 60, streaming: llmStreaming)
         Task {
             if let p = provider { await controller.updateTranscriberProvider(p) }
             await controller.updateTranscriberSettings(tSettings)

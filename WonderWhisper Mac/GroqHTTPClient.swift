@@ -4,7 +4,7 @@ import Compression
 
 struct GroqHTTPClient {
     let apiKeyProvider: () -> String?
-    
+
     // Connection pre-warming for faster subsequent requests
     static func preWarmConnection(to url: URL) {
         Task {
@@ -13,20 +13,26 @@ struct GroqHTTPClient {
                 request.httpMethod = "HEAD"
                 request.setValue("application/json", forHTTPHeaderField: "Accept")
                 request.timeoutInterval = 5.0
-                _ = try await prioritySession.data(for: request)
+                // Warm both the default session (used for JSON chat) and the priority session (used in some uploads)
+                let req1 = request
+                let req2 = request
+                async let warm1: (Data, URLResponse) = session.data(for: req1)
+                async let warm2: (Data, URLResponse) = prioritySession.data(for: req2)
+                _ = try await warm1
+                _ = try await warm2
             } catch {
                 // Ignore pre-warming errors
             }
         }
     }
-    
+
     // MARK: - Request Compression
     private static func compressData(_ data: Data) throws -> Data {
         // Simple implementation - for now just return original data
         // Real compression would require more complex implementation
         return data
     }
-    
+
     private static func shouldCompressRequest(contentLength: Int) -> Bool {
         // Only compress larger payloads where the benefit outweighs the CPU cost
         return contentLength > 2048 // 2KB minimum
@@ -42,18 +48,19 @@ struct GroqHTTPClient {
         cfg.timeoutIntervalForResource = 30 // Reduced from 60s for tighter timeouts
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
-        
+
         // Enable HTTP/3 QUIC support for faster connection establishment
-        cfg.httpAdditionalHeaders = ["Alt-Svc": "h3=\":443\"; ma=86400"]
+        // Remove Alt-Svc request header; server advertises this in responses
+        // cfg.httpAdditionalHeaders = ["Alt-Svc": "h3=\":443\"; ma=86400"]
         cfg.networkServiceType = .responsiveData
-        
+
         // Connection pooling and keep-alive optimizations
         cfg.httpShouldSetCookies = false
         cfg.connectionProxyDictionary = nil // Direct connections
-        
+
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
-    
+
     // Pre-warmed session for critical requests
     static let prioritySession: URLSession = {
         let cfg = URLSessionConfiguration.default
@@ -81,6 +88,8 @@ struct GroqHTTPClient {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("gzip, br", forHTTPHeaderField: "Accept-Encoding")
         request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
         request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
         request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
@@ -97,6 +106,8 @@ struct GroqHTTPClient {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("gzip, br", forHTTPHeaderField: "Accept-Encoding")
         request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
         request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
         request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
@@ -105,13 +116,79 @@ struct GroqHTTPClient {
 
         return try await performWithRetry(request: request, start: start, context: context)
     }
+    // Streaming JSON (SSE) variant for chat completions. Returns the accumulated content string.
+    func postJSONEncodableStream<T: Encodable>(to url: URL, body: T, timeout: TimeInterval, context: String? = nil) async throws -> String {
+        let start = Date()
+        let reqId = UUID().uuidString
+        AppLog.network.log("POST JSON STREAM [\(context ?? "-")] to \(url.absoluteString, privacy: .public) req=\(reqId)")
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        // Do not set Accept-Encoding for SSE; allow immediate flushes
+        request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
+        request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
+        request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
+        let encoder = JSONEncoder()
+        request.httpBody = try encoder.encode(body)
+
+        // Enforce per-attempt wall-clock timeout for streaming
+        return try await withThrowingTaskGroup(of: String.self) { group in
+            // Network streaming task
+            group.addTask {
+                var aggregated = ""
+                let (bytes, response) = try await GroqHTTPClient.session.bytes(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    // Read any available body into string for diagnostics
+                    var bodySample = ""
+                    for try await line in bytes.lines {
+                        bodySample += line + "\n"
+                        if bodySample.count > 8_192 { break }
+                    }
+                    throw ProviderError.http(status: http.statusCode, body: bodySample)
+                }
+                for try await line in bytes.lines {
+                    if line.hasPrefix(":") { continue } // comment/keepalive
+                    guard line.hasPrefix("data:") else { continue }
+                    var payload = String(line.dropFirst(5)) // after "data:"
+                    if payload.hasPrefix(" ") { payload.removeFirst() }
+                    if payload == "[DONE]" { break }
+                    // Parse JSON chunk and extract choices[0].delta.content if present
+                    if let data = payload.data(using: .utf8),
+                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let choices = obj["choices"] as? [[String: Any]],
+                       let first = choices.first {
+                        if let delta = first["delta"] as? [String: Any], let part = delta["content"] as? String {
+                            aggregated += part
+                        } else if let msg = first["message"] as? [String: Any], let part = msg["content"] as? String {
+                            // Some implementations may send full message objects mid-stream
+                            aggregated += part
+                        }
+                    }
+                }
+                AppLog.network.log("STREAM completed req=\(reqId) in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+                return aggregated
+            }
+            // Timeout task
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(1.0, timeout) * 1_000_000_000))
+                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut, userInfo: [NSLocalizedDescriptionKey: "Stream timed out after \(Int(timeout))s"])
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown, userInfo: [NSLocalizedDescriptionKey: "No stream result"])
+            }
+            return result
+        }
+    }
+
 
     struct MultipartFile {
         let fieldName: String
         let filename: String
         let mimeType: String
         let data: Data
-        
+
         // Convenience initializer for direct Data upload
         init(fieldName: String, filename: String, mimeType: String, data: Data) {
             self.fieldName = fieldName
@@ -119,7 +196,7 @@ struct GroqHTTPClient {
             self.mimeType = mimeType
             self.data = data
         }
-        
+
         // Convenience initializer from file URL (existing behavior)
         init(fieldName: String, filename: String, mimeType: String, fileURL: URL) throws {
             self.fieldName = fieldName
@@ -204,12 +281,12 @@ struct GroqHTTPClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .responsiveData
-        
+
         // Set compression headers if body was compressed
         if shouldCompress {
             request.setValue("lzfse", forHTTPHeaderField: "Content-Encoding")
         }
-        
+
         request.httpBody = finalBody
 
         // Parallel upload strategy: Try both URLSession and curl HTTP/2 simultaneously, use fastest result
@@ -219,26 +296,26 @@ struct GroqHTTPClient {
                 var priorityRequest = request
                 priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
                 priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
-                
+
                 let (data, response) = try await Self.prioritySession.data(for: priorityRequest)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
                 }
                 return data
             }
-            
+
             // Task 2: Standard URLSession as fallback
             group.addTask {
                 // Add small delay to prefer priority session
                 try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
-                
+
                 let (data, response) = try await dataWithAttemptTimeout(for: request)
                 if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                     throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
                 }
                 return data
             }
-            
+
             // Task 3: Curl HTTP/2 as final fallback (with delay)
             if AppConfig.forceHTTP2ForUploads {
                 group.addTask {
@@ -253,15 +330,15 @@ struct GroqHTTPClient {
                     )
                 }
             }
-            
+
             // Return the first successful result
             guard let result = try await group.next() else {
                 throw ProviderError.notImplemented
             }
-            
+
             let elapsed = Date().timeIntervalSince(start)
             AppLog.network.log("Parallel upload completed req=\(reqId) in \(elapsed, format: .fixed(precision: 3))s")
-            
+
             // Cancel remaining tasks
             group.cancelAll()
             return result
@@ -282,7 +359,9 @@ final class GroqURLSessionDelegate: NSObject, URLSessionTaskDelegate {
         let req = tx.request
         let reqId = req.value(forHTTPHeaderField: "X-WW-Request-ID") ?? "?"
         let ctx = req.value(forHTTPHeaderField: "X-WW-Context") ?? "-"
-        AppLog.network.log("Metrics req=\(reqId) ctx=\(ctx) proto=\(proto) dns=\(dns ?? -1)s connect=\(connect ?? -1)s tls=\(tls ?? -1)s")
+        let ttfb = (tx.responseStartDate?.timeIntervalSince(tx.requestStartDate ?? tx.fetchStartDate ?? Date()))
+        let transfer = (tx.responseEndDate?.timeIntervalSince(tx.responseStartDate ?? tx.responseEndDate ?? Date()))
+        AppLog.network.log("Metrics req=\(reqId) ctx=\(ctx) proto=\(proto) dns=\(dns ?? -1)s connect=\(connect ?? -1)s tls=\(tls ?? -1)s ttfb=\(ttfb ?? -1)s transfer=\(transfer ?? -1)s")
     }
 }
 

@@ -54,6 +54,8 @@ struct SettingsModelsView: View {
                     Text("openai/gpt-oss-120b").tag("openai/gpt-oss-120b")
                     Text("meta-llama/llama-4-scout-17b-16e-instruct").tag("meta-llama/llama-4-scout-17b-16e-instruct")
                 }
+                Toggle("Streaming (SSE)", isOn: $vm.llmStreaming)
+                    .help("Enable streaming responses for faster time-to-first-token. Uses the same prompt and output format.")
             }
         }
         .formStyle(.grouped)
