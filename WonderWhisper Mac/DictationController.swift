@@ -59,6 +59,12 @@ actor DictationController {
                     try? recorder.startStreamingPCM16 { data in
                         Task { try? await dg.feedPCM16(data) }
                     }
+                } else if let groq = transcriber as? GroqStreamingProvider {
+                    groq.updateSettings(transcriberSettings)
+                    try await groq.beginRealtime()
+                    try? recorder.startStreamingPCM16 { data in
+                        Task { try? await groq.feedPCM16(data) }
+                    }
                 }
                 state = .recording
                 // Pre-capture screen context early (AX first, OCR fallback)
@@ -82,6 +88,7 @@ actor DictationController {
         // Stop live streaming if active
         if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
+        if transcriber is GroqStreamingProvider { recorder.stopStreamingPCM16() }
         
         var recordingFileURL: URL? = nil // Track the file URL for history - defined at function scope
         
@@ -106,6 +113,15 @@ actor DictationController {
             } else if let dg = transcriber as? DeepgramStreamingProvider {
                 // Prefer Deepgram live session transcript gathered during recording
                 transcript = try await dg.endRealtime()
+                if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let maybeURL = await recorder.stopRecordingAndWait()
+                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
+                    recordingFileURL = fileURL
+                    transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
+                }
+            } else if let groq = transcriber as? GroqStreamingProvider {
+                // Prefer Groq chunked streaming transcript for speed
+                transcript = try await groq.endRealtime()
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     let maybeURL = await recorder.stopRecordingAndWait()
                     guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }

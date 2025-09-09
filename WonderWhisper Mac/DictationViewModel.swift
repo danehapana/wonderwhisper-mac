@@ -292,6 +292,11 @@ final class DictationViewModel: ObservableObject {
             let key = KeychainService().getSecret(forKey: AppConfig.deepgramAPIKeyAlias) ?? ""
             provider = DeepgramStreamingProvider(apiKey: key)
             tSettings = TranscriptionSettings(endpoint: URL(string: "wss://api.deepgram.com/v1/listen")!, model: transcriptionModel, timeout: max(5, min(180, transcriptionTimeoutSeconds)))
+        } else if transcriptionModel == "groq-streaming" {
+            provider = GroqStreamingProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
+            // Use the actual Whisper model for the underlying transcription, but keep the groq-streaming identifier for the UI
+            let actualModel = "whisper-large-v3-turbo" // Default to the fastest model for streaming
+            tSettings = TranscriptionSettings(endpoint: AppConfig.groqAudioTranscriptions, model: actualModel, timeout: max(5, min(120, transcriptionTimeoutSeconds)))
         } else {
             provider = GroqTranscriptionProvider(client: GroqHTTPClient(apiKeyProvider: { KeychainService().getSecret(forKey: AppConfig.groqAPIKeyAlias) }))
         }

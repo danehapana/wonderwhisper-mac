@@ -179,63 +179,106 @@ extension AudioRecorder: AVAudioRecorderDelegate {
 // MARK: - Live Streaming (PCM16 16 kHz mono)
 extension AudioRecorder {
     func startStreamingPCM16(onFrame: @escaping (Data) -> Void) throws {
-        guard !isStreaming else { return }
+        // Force cleanup of any existing streaming session first
+        if isStreaming {
+            stopStreamingPCM16()
+            // Give audio system time to fully clean up
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        
         isStreaming = true
         self.onPCM16Frame = onFrame
 
         let engine = AVAudioEngine()
         self.engine = engine
         let input = engine.inputNode
+
+        // Get input format and validate it
         let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+            throw NSError(domain: "AudioRecorder", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid input audio format"])
+        }
+
+        // Connect input to main mixer with volume muted to drive the engine without monitoring
+        engine.mainMixerNode.outputVolume = 0
+        engine.connect(input, to: engine.mainMixerNode, format: inputFormat)
+
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
             sampleRate: 16_000,
             channels: 1,
             interleaved: true
         )!
-        self.converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+
+        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+            throw NSError(domain: "AudioRecorder", code: -2, userInfo: [NSLocalizedDescriptionKey: "Could not create audio converter"])
+        }
+        self.converter = converter
         pcmAccumulator.removeAll(keepingCapacity: true)
 
         // 50ms at 16kHz = 800 samples (mono) = 1600 bytes
         let chunkBytes = 800 * 2
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-            guard let self = self, let converter = self.converter else { return }
-            // Prepare output buffer with a reasonable capacity
-            guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(1600)) else { return }
-            outBuffer.frameLength = 0
+        do {
+            engine.prepare()
+            input.installTap(onBus: 0, bufferSize: 512, format: inputFormat) { [weak self] buffer, _ in
+                guard let self = self, let converter = self.converter, self.isStreaming else { return }
+                // Prepare output buffer with a reasonable capacity
+                guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(1600)) else { return }
+                outBuffer.frameLength = 0
 
-            let status = converter.convert(to: outBuffer, error: nil, withInputFrom: { _, outStatus in
-                outStatus.pointee = .haveData
-                return buffer
-            })
+                let status = converter.convert(to: outBuffer, error: nil, withInputFrom: { _, outStatus in
+                    outStatus.pointee = .haveData
+                    return buffer
+                })
 
-            if status == .haveData, let channel = outBuffer.int16ChannelData {
-                let samples = channel[0]
-                let frames = Int(outBuffer.frameLength)
-                let bytes = UnsafeBufferPointer(start: samples, count: frames)
-                let data = Data(buffer: bytes)
-                self.pcmAccumulator.append(data)
+                if status == .haveData, let channel = outBuffer.int16ChannelData {
+                    let samples = channel[0]
+                    let frames = Int(outBuffer.frameLength)
+                    let bytes = UnsafeBufferPointer(start: samples, count: frames)
+                    let data = Data(buffer: bytes)
+                    self.pcmAccumulator.append(data)
 
-                while self.pcmAccumulator.count >= chunkBytes {
-                    let chunk = self.pcmAccumulator.prefix(chunkBytes)
-                    self.pcmAccumulator.removeFirst(chunkBytes)
-                    let chunkData = Data(chunk)
-                    self.streamQueue.async { [onFrame] in
-                        onFrame(chunkData)
+                    while self.pcmAccumulator.count >= chunkBytes {
+                        let chunk = self.pcmAccumulator.prefix(chunkBytes)
+                        self.pcmAccumulator.removeFirst(chunkBytes)
+                        let chunkData = Data(chunk)
+                        self.streamQueue.async { [onFrame] in
+                            onFrame(chunkData)
+                        }
                     }
                 }
             }
+            
+            try engine.start()
+            AppLog.dictation.log("AudioRecorder: engine.start OK; input sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount)")
+        } catch {
+            // Log OSStatus if available for diagnostics (-10877 etc.)
+            let ns = error as NSError
+            AppLog.dictation.error("AudioRecorder: engine.start failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+            // Clean up on failure
+            isStreaming = false
+            self.engine?.stop()
+            if let input = self.engine?.inputNode { input.removeTap(onBus: 0) }
+            self.engine = nil
+            self.converter = nil
+            throw error
         }
-
-        try engine.start()
     }
 
     func stopStreamingPCM16() {
         guard isStreaming else { return }
         isStreaming = false
-        if let input = engine?.inputNode { input.removeTap(onBus: 0) }
-        engine?.stop()
+
+        // Remove tap first to avoid callbacks during engine teardown
+        if let input = self.engine?.inputNode {
+            input.removeTap(onBus: 0)
+        }
+
+        // Then stop the engine
+        self.engine?.stop()
+
+        // Clear all references
         engine = nil
         converter = nil
         pcmAccumulator.removeAll()

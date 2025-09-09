@@ -16,11 +16,31 @@ struct SettingsModelsView: View {
                     Text("whisper-large-v3-turbo").tag("whisper-large-v3-turbo")
                     Text("whisper-large-v3").tag("whisper-large-v3")
                     Text("distil-whisper-large-v3-en").tag("distil-whisper-large-v3-en")
+                    Text("Groq (Chunked Streaming)").tag("groq-streaming")
                     Text("Parakeet v3 (local)").tag("parakeet-local")
                     Text("AssemblyAI (Streaming)").tag("assemblyai-streaming")
                     Text("Deepgram (Streaming)").tag("deepgram-streaming")
                 }
-                if vm.transcriptionModel.lowercased().contains("parakeet") || vm.transcriptionModel.lowercased().contains("local") {
+                
+                if vm.transcriptionModel == "groq-streaming" {
+                    GroupBox("Groq Chunked Streaming") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "bolt.fill")
+                                    .foregroundColor(.yellow)
+                                Text("Faster results through intelligent audio chunking")
+                                    .font(.subheadline)
+                            }
+                            Text("• Processes audio in 3-second chunks for faster response times")
+                            Text("• Results appear within seconds instead of waiting for full recording")
+                            Text("• Ideal for longer recordings and real-time feedback")
+                            Text("• Uses whisper-large-v3-turbo for optimal speed/accuracy balance")
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    }
+                } else if vm.transcriptionModel.lowercased().contains("parakeet") || vm.transcriptionModel.lowercased().contains("local") {
                     GroupBox("Parakeet Status") {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {

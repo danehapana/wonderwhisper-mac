@@ -30,13 +30,24 @@ struct AudioDeviceInfo: Hashable {
 
 enum AudioDeviceManager {
     static func availableInputDevices() -> [AudioDeviceInfo] {
-        // Use discovery session (preferred over deprecated devices(for:))
-        let session = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInMicrophone, .externalUnknown],
-            mediaType: .audio,
-            position: .unspecified
+        // Enumerate HAL audio devices to avoid CMIO/camera dependency and entitlement noise
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
         )
-        return session.devices.map { AudioDeviceInfo(uid: $0.uniqueID, name: $0.localizedName) }
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return [] }
+        let count = Int(size) / MemoryLayout<AudioObjectID>.size
+        var ids = Array(repeating: AudioObjectID(0), count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
+        var result: [AudioDeviceInfo] = []
+        for id in ids {
+            if inputChannelCount(deviceID: id) > 0, let uid = deviceUID(from: id), let name = deviceName(from: id) {
+                result.append(AudioDeviceInfo(uid: uid, name: name))
+            }
+        }
+        return result
     }
 
     static func currentDefaultInputUID() -> String? {
@@ -137,6 +148,43 @@ enum AudioDeviceManager {
             if let dUID = deviceUID(from: id), dUID == uid { return id }
         }
         return nil
+    }
+
+    // MARK: - Helpers
+    private static func deviceName(from deviceID: AudioObjectID) -> String? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size = UInt32(MemoryLayout<CFString?>.size)
+        var cf: CFString? = nil
+        let status = withUnsafeMutablePointer(to: &cf) { ptr -> OSStatus in
+            return AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, ptr)
+        }
+        guard status == noErr, let s = cf as String? else { return nil }
+        return s
+    }
+
+    private static func inputChannelCount(deviceID: AudioObjectID) -> UInt32 {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
+        // Allocate buffer list
+        let ablPtr = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(size) / MemoryLayout<AudioBufferList>.size)
+        defer { ablPtr.deallocate() }
+        var status = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, ablPtr)
+        guard status == noErr else { return 0 }
+        // Sum channels
+        var channels: UInt32 = 0
+        let mBuffers = Int(ablPtr.pointee.mNumberBuffers)
+        let bufPtr = UnsafeBufferPointer(start: &ablPtr.pointee.mBuffers, count: mBuffers)
+        for i in 0..<mBuffers { channels += bufPtr[i].mNumberChannels }
+        return channels
     }
 
     @discardableResult
