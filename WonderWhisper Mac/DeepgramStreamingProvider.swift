@@ -240,6 +240,12 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
     return ws != nil && isConnected
   }
   
+  // Abort session immediately without finalizing
+  func abort() async {
+    await cleanupConnection()
+    acc = nil
+  }
+  
   // Helper to clean up connection state
   private func cleanupConnection() async {
     // Mark as disconnected first to stop new operations

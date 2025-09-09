@@ -179,6 +179,14 @@ final class GroqStreamingProvider: TranscriptionProvider {
         return finalTranscript
     }
 
+    // Abort streaming session immediately without emitting transcript
+    func abort() async {
+        isStreaming = false
+        await uploads.cancelAll()
+        await chunker.reset()
+        accumulator = nil
+    }
+
     // MARK: - Private Chunk Upload Logic
 
     private func uploadChunk(_ chunkData: Data, chunkNumber: Int, accumulator: GroqTranscriptAccumulator?, isFinal: Bool = false) async {

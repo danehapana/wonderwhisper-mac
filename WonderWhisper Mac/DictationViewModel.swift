@@ -1,11 +1,12 @@
 import Foundation
 import Combine
 import Carbon.HIToolbox
+import AppKit
 
 @MainActor
 final class DictationViewModel: ObservableObject {
     @Published var status: String = "Idle"
-    @Published var isRecording: Bool = false
+    @Published var isRecording: Bool = false { didSet { updateEscapeMonitor(isRecording: isRecording) } }
     @Published var audioLevel: Float = 0
 
     // Prompts
@@ -57,6 +58,9 @@ final class DictationViewModel: ObservableObject {
     private var timer: Timer?
     private var idleSkipCounter: Int = 0
     let history = HistoryStore()
+
+    // Global Escape key monitor (enabled only while recording)
+    private var escapeEventMonitor: Any?
 
     // Hotkey
     private let hotkeys = HotkeyManager()
@@ -184,6 +188,8 @@ final class DictationViewModel: ObservableObject {
 
     deinit {
         timer?.invalidate()
+        if let m = escapeEventMonitor { NSEvent.removeMonitor(m) }
+        escapeEventMonitor = nil
     }
 
     private func controllerState() async -> String {
@@ -213,6 +219,19 @@ final class DictationViewModel: ObservableObject {
 
     func cancel() {
         Task { await controller.cancel() }
+    }
+
+    private func updateEscapeMonitor(isRecording: Bool) {
+        // Remove any existing monitor first
+        if let m = escapeEventMonitor { NSEvent.removeMonitor(m); escapeEventMonitor = nil }
+        guard isRecording else { return }
+        // Register a global keyDown monitor for Escape (keyCode 53)
+        escapeEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: NSEvent.EventTypeMask.keyDown) { [weak self] (event: NSEvent) in
+            guard let self = self else { return }
+            if event.keyCode == 53 { // kVK_Escape
+                self.cancel()
+            }
+        }
     }
 
     func saveGroqApiKey(_ value: String) {

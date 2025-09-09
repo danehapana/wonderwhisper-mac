@@ -169,6 +169,16 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     }
   }
 
+  // Abort live session immediately without attempting to finalize
+  func abortRealtimeSession() async {
+    liveReceiveTask?.cancel()
+    liveTask?.cancel(with: .goingAway, reason: nil)
+    liveTask = nil
+    liveReceiveTask = nil
+    liveAccumulator = nil
+    pendingBinaryChunks.removeAll()
+  }
+
   // MARK: - Audio streaming
   private func streamFileAsPCM16(url: URL, sampleRate: Double, to task: URLSessionWebSocketTask) async throws {
     // Convert source file to mono PCM16 16k and stream in ~50ms chunks

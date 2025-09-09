@@ -273,11 +273,26 @@ actor DictationController {
     }
 
     func cancel() async {
+        // Cancel only applies to active recording; do not emit any output or history
         guard state == .recording else { return }
+        // Stop live mic streaming if active
+        recorder.stopStreamingPCM16()
+        // Abort any active streaming provider sessions immediately (best-effort)
+        if let aai = transcriber as? AssemblyAIStreamingProvider {
+            await aai.abortRealtimeSession()
+        } else if let dg = transcriber as? DeepgramStreamingProvider {
+            await dg.abort()
+        } else if let groq = transcriber as? GroqStreamingProvider {
+            await groq.abort()
+        }
+        // Stop file recording and delete any created file
         _ = recorder.stopRecording()
         if let url = currentRecordingURL { try? FileManager.default.removeItem(at: url) }
         currentRecordingURL = nil
+        // Reset any pre-captured context
         preCapturedScreenText = nil
+        preCapturedScreenMethod = nil
+        // Return to idle; no processing/transcription/insertion/history occurs
         state = .idle
     }
 
