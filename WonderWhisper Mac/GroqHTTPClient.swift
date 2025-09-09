@@ -6,12 +6,14 @@ struct GroqHTTPClient {
 
     static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
-        cfg.waitsForConnectivity = true
+        cfg.waitsForConnectivity = false // fail fast; our retry/backoff handles transient offline
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
         cfg.httpMaximumConnectionsPerHost = 6
         cfg.timeoutIntervalForRequest = 20
         cfg.timeoutIntervalForResource = 60
+        cfg.allowsExpensiveNetworkAccess = true
+        cfg.allowsConstrainedNetworkAccess = true
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
@@ -112,9 +114,31 @@ struct GroqHTTPClient {
         request.setValue(try authHeader(), forHTTPHeaderField: "Authorization")
         request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
         request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.networkServiceType = .responsiveData
         request.httpBody = body
 
-        return try await performWithRetry(request: request, start: start, context: context)
+        // Fast first attempt via URLSession; on timeout/connection errors, fall back to curl HTTP/2 path for robustness
+        do {
+            let (data, response) = try await dataWithAttemptTimeout(for: request)
+            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                AppLog.network.error("HTTP \(http.statusCode) for \(url.absoluteString, privacy: .public) first-attempt in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+                throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+            }
+            AppLog.network.log("OK \(((response as? HTTPURLResponse)?.statusCode ?? -1)) for \(url.lastPathComponent, privacy: .public) first-attempt in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
+            return data
+        } catch {
+            let ns = error as NSError
+            AppLog.network.error("Multipart first-attempt failed (\(ns.domain)#\(ns.code)) req=\(reqId) ctx=\(context ?? "-") — falling back to curl HTTP/2")
+            return try await postMultipartViaCurl(
+                url: url,
+                fields: fields,
+                files: files,
+                timeout: timeout,
+                context: context,
+                reqId: reqId
+            )
+        }
     }
 }
 

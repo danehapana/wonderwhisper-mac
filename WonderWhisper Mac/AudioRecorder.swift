@@ -19,18 +19,29 @@ final class AudioRecorder: NSObject {
 
     func startRecording() throws -> URL {
         let tempDir = FileManager.default.temporaryDirectory
-        let filename = "dictation_\(UUID().uuidString).wav"
+        let useAAC = (UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav").lowercased() == "aac"
+        let filename = "dictation_\(UUID().uuidString)." + (useAAC ? "m4a" : "wav")
         let url = tempDir.appendingPathComponent(filename)
 
-        // WAV PCM Float32 mono at 16kHz for best ASR compatibility
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 16_000.0,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMIsBigEndianKey: false
-        ]
+        // Recording settings: AAC (m4a) for smallest payloads, or WAV PCM Int16 for maximum compatibility
+        let settings: [String: Any]
+        if useAAC {
+            settings = [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 16_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000 // ~32 kbps mono; ~4 KB/s
+            ]
+        } else {
+            settings = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: 16_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false
+            ]
+        }
 
         // If a specific input device was selected, optionally switch system default temporarily
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {

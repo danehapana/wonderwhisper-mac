@@ -24,7 +24,7 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         let mime: String
         switch inputURL.pathExtension.lowercased() {
         case "wav": mime = "audio/wav"
-        case "m4a": mime = "audio/m4a"
+        case "m4a": mime = "audio/mp4" // m4a container
         case "aac": mime = "audio/aac"
         case "caf": mime = "audio/x-caf"
         default: mime = "application/octet-stream"
