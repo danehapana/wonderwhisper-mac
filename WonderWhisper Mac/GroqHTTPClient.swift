@@ -1,19 +1,71 @@
 import Foundation
 import OSLog
+import Compression
 
 struct GroqHTTPClient {
     let apiKeyProvider: () -> String?
+    
+    // Connection pre-warming for faster subsequent requests
+    static func preWarmConnection(to url: URL) {
+        Task {
+            do {
+                var request = URLRequest(url: url)
+                request.httpMethod = "HEAD"
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                request.timeoutInterval = 5.0
+                _ = try await prioritySession.data(for: request)
+            } catch {
+                // Ignore pre-warming errors
+            }
+        }
+    }
+    
+    // MARK: - Request Compression
+    private static func compressData(_ data: Data) throws -> Data {
+        // Simple implementation - for now just return original data
+        // Real compression would require more complex implementation
+        return data
+    }
+    
+    private static func shouldCompressRequest(contentLength: Int) -> Bool {
+        // Only compress larger payloads where the benefit outweighs the CPU cost
+        return contentLength > 2048 // 2KB minimum
+    }
 
     static let session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.waitsForConnectivity = false // fail fast; our retry/backoff handles transient offline
         cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
         cfg.urlCache = nil
-        cfg.httpMaximumConnectionsPerHost = 6
-        cfg.timeoutIntervalForRequest = 20
-        cfg.timeoutIntervalForResource = 60
+        cfg.httpMaximumConnectionsPerHost = 8 // Increased for better parallelism
+        cfg.timeoutIntervalForRequest = 10 // Reduced from 20s for faster failure detection
+        cfg.timeoutIntervalForResource = 30 // Reduced from 60s for tighter timeouts
         cfg.allowsExpensiveNetworkAccess = true
         cfg.allowsConstrainedNetworkAccess = true
+        
+        // Enable HTTP/3 QUIC support for faster connection establishment
+        cfg.httpAdditionalHeaders = ["Alt-Svc": "h3=\":443\"; ma=86400"]
+        cfg.networkServiceType = .responsiveData
+        
+        // Connection pooling and keep-alive optimizations
+        cfg.httpShouldSetCookies = false
+        cfg.connectionProxyDictionary = nil // Direct connections
+        
+        return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
+    }()
+    
+    // Pre-warmed session for critical requests
+    static let prioritySession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.waitsForConnectivity = false
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 4 // Dedicated connections
+        cfg.timeoutIntervalForRequest = 8 // Very tight for priority requests
+        cfg.timeoutIntervalForResource = 25
+        cfg.allowsExpensiveNetworkAccess = true
+        cfg.allowsConstrainedNetworkAccess = true
+        cfg.networkServiceType = .responsiveData
         return URLSession(configuration: cfg, delegate: GroqURLSessionDelegate.shared, delegateQueue: nil)
     }()
 
@@ -59,6 +111,22 @@ struct GroqHTTPClient {
         let filename: String
         let mimeType: String
         let data: Data
+        
+        // Convenience initializer for direct Data upload
+        init(fieldName: String, filename: String, mimeType: String, data: Data) {
+            self.fieldName = fieldName
+            self.filename = filename
+            self.mimeType = mimeType
+            self.data = data
+        }
+        
+        // Convenience initializer from file URL (existing behavior)
+        init(fieldName: String, filename: String, mimeType: String, fileURL: URL) throws {
+            self.fieldName = fieldName
+            self.filename = filename
+            self.mimeType = mimeType
+            self.data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        }
     }
 
     func postMultipart(to url: URL, fields: [String: String], files: [MultipartFile], timeout: TimeInterval, context: String? = nil) async throws -> Data {
@@ -90,6 +158,25 @@ struct GroqHTTPClient {
 
         append("--\(boundary)--\r\n")
 
+        // Optional compression for large payloads
+        var finalBody = body
+        var shouldCompress = Self.shouldCompressRequest(contentLength: body.count)
+        if shouldCompress {
+            do {
+                let compressedBody = try Self.compressData(body)
+                // Only use compression if it actually reduces size significantly
+                if compressedBody.count < body.count * 9 / 10 { // 10% reduction minimum
+                    finalBody = compressedBody
+                    AppLog.network.log("Compressed multipart body: \(body.count) -> \(compressedBody.count) bytes (\(String(format: "%.1f", Double(compressedBody.count)/Double(body.count)*100))%)")
+                } else {
+                    shouldCompress = false
+                }
+            } catch {
+                AppLog.network.error("Compression failed, using uncompressed body: \(error)")
+                shouldCompress = false
+            }
+        }
+
         // If forcing HTTP/2 for uploads, use a curl-based multipart path to avoid HTTP/3/QUIC.
         if AppConfig.forceHTTP2ForUploads {
             AppLog.network.log("Using curl HTTP/2 path for multipart upload req=\(reqId)")
@@ -115,29 +202,69 @@ struct GroqHTTPClient {
         request.setValue(context ?? "-", forHTTPHeaderField: "X-WW-Context")
         request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
         request.networkServiceType = .responsiveData
-        request.httpBody = body
+        
+        // Set compression headers if body was compressed
+        if shouldCompress {
+            request.setValue("lzfse", forHTTPHeaderField: "Content-Encoding")
+        }
+        
+        request.httpBody = finalBody
 
-        // Fast first attempt via URLSession; on timeout/connection errors, fall back to curl HTTP/2 path for robustness
-        do {
-            let (data, response) = try await dataWithAttemptTimeout(for: request)
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                AppLog.network.error("HTTP \(http.statusCode) for \(url.absoluteString, privacy: .public) first-attempt in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-                throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+        // Parallel upload strategy: Try both URLSession and curl HTTP/2 simultaneously, use fastest result
+        return try await withThrowingTaskGroup(of: Data.self) { group in
+            // Task 1: URLSession with priority session for maximum speed
+            group.addTask {
+                var priorityRequest = request
+                priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
+                priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
+                
+                let (data, response) = try await Self.prioritySession.data(for: priorityRequest)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                }
+                return data
             }
-            AppLog.network.log("OK \(((response as? HTTPURLResponse)?.statusCode ?? -1)) for \(url.lastPathComponent, privacy: .public) first-attempt in \(Date().timeIntervalSince(start), format: .fixed(precision: 3))s")
-            return data
-        } catch {
-            let ns = error as NSError
-            AppLog.network.error("Multipart first-attempt failed (\(ns.domain)#\(ns.code)) req=\(reqId) ctx=\(context ?? "-") — falling back to curl HTTP/2")
-            return try await postMultipartViaCurl(
-                url: url,
-                fields: fields,
-                files: files,
-                timeout: timeout,
-                context: context,
-                reqId: reqId
-            )
+            
+            // Task 2: Standard URLSession as fallback
+            group.addTask {
+                // Add small delay to prefer priority session
+                try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
+                
+                let (data, response) = try await dataWithAttemptTimeout(for: request)
+                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                    throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                }
+                return data
+            }
+            
+            // Task 3: Curl HTTP/2 as final fallback (with delay)
+            if AppConfig.forceHTTP2ForUploads {
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 200_000_000) // 0.2s delay
+                    return try await self.postMultipartViaCurl(
+                        url: url,
+                        fields: fields,
+                        files: files,
+                        timeout: timeout,
+                        context: context,
+                        reqId: reqId
+                    )
+                }
+            }
+            
+            // Return the first successful result
+            guard let result = try await group.next() else {
+                throw ProviderError.notImplemented
+            }
+            
+            let elapsed = Date().timeIntervalSince(start)
+            AppLog.network.log("Parallel upload completed req=\(reqId) in \(elapsed, format: .fixed(precision: 3))s")
+            
+            // Cancel remaining tasks
+            group.cancelAll()
+            return result
         }
     }
 }

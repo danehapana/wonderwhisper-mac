@@ -16,32 +16,59 @@ final class AudioRecorder: NSObject {
     private var isStreaming: Bool = false
     private let streamQueue = DispatchQueue(label: "audio.stream.queue", qos: .userInitiated)
     private var onPCM16Frame: ((Data) -> Void)?
+    
+    // Memory recording removed due to unreliable output
 
-    func startRecording() throws -> URL {
-        let tempDir = FileManager.default.temporaryDirectory
-        let useAAC = (UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav").lowercased() == "aac"
-        let filename = "dictation_\(UUID().uuidString)." + (useAAC ? "m4a" : "wav")
-        let url = tempDir.appendingPathComponent(filename)
-
-        // Recording settings: AAC (m4a) for smallest payloads, or WAV PCM Int16 for maximum compatibility
-        let settings: [String: Any]
-        if useAAC {
-            settings = [
+    // MARK: - Audio Format Configuration
+    private func audioFormatSettings(format: String) throws -> (filename: String, settings: [String: Any]) {
+        switch format {
+        case "mp3":
+            // Note: macOS doesn't natively support MP3 recording via AVAudioRecorder
+            // Fall back to AAC with aggressive compression for similar file sizes
+            return ("m4a", [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 16_000.0,
                 AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 32_000 // ~32 kbps mono; ~4 KB/s
-            ]
-        } else {
-            settings = [
+                AVEncoderBitRateKey: 16_000 // Aggressive AAC compression = ~2 KB/s, similar to MP3
+            ])
+        case "ogg":
+            // Note: macOS doesn't natively support OGG recording via AVAudioRecorder
+            // Fall back to AAC with very low bitrate for similar compression
+            return ("m4a", [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 16_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 16_000 // Aggressive AAC compression = ~2 KB/s
+            ])
+        case "aac":
+            return ("m4a", [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: 16_000.0,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 32_000 // Original 32 kbps = ~4 KB/s
+            ])
+        default: // "wav"
+            return ("wav", [
                 AVFormatIDKey: kAudioFormatLinearPCM,
                 AVSampleRateKey: 16_000.0,
                 AVNumberOfChannelsKey: 1,
                 AVLinearPCMBitDepthKey: 16,
                 AVLinearPCMIsFloatKey: false,
                 AVLinearPCMIsBigEndianKey: false
-            ]
+            ])
         }
+    }
+
+    func startRecording() throws -> URL {
+        let tempDir = FileManager.default.temporaryDirectory
+        let format = UserDefaults.standard.string(forKey: "audio.recording.format") ?? "wav"
+        let formatLower = format.lowercased()
+        
+        // Determine filename and extension based on format
+        let (filename, settings) = try audioFormatSettings(format: formatLower)
+        let url = tempDir.appendingPathComponent("dictation_\(UUID().uuidString).\(filename)")
+
+        // Recording settings optimized for speech transcription at 16kHz mono
 
         // If a specific input device was selected, optionally switch system default temporarily
         if UserDefaults.standard.bool(forKey: "audio.switchSystemDefault") {
@@ -139,6 +166,8 @@ final class AudioRecorder: NSObject {
         return pow(norm, 1.1)
     }
 }
+
+// Memory recording extension removed - was causing unreliable transcription output
 
 extension AudioRecorder: AVAudioRecorderDelegate {
     func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {

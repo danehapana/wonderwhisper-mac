@@ -6,6 +6,11 @@ enum AudioPreprocessor {
     static var isEnabled: Bool {
         UserDefaults.standard.bool(forKey: "audio.preprocess.enabled")
     }
+    
+    // Smart preprocessing: only apply when beneficial based on audio quality analysis
+    static var smartModeEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "audio.preprocess.smart") // defaults to false for backward compatibility
+    }
 
     // Apply simple, robust steps for ASR clarity:
     // - First‑order high‑pass at 90 Hz to remove rumble
@@ -14,7 +19,82 @@ enum AudioPreprocessor {
     // Returns a new 16kHz mono Float32 WAV file URL.
     static func processIfEnabled(_ url: URL) -> URL {
         guard isEnabled else { return url }
-        do { return try process(url) } catch { return url }
+        
+        // Smart mode: analyze quality first
+        if smartModeEnabled {
+            do {
+                let quality = try analyzeAudioQuality(url)
+                if quality.needsProcessing {
+                    return try process(url)
+                } else {
+                    // Audio is already clean, skip processing for better performance
+                    return url
+                }
+            } catch {
+                // If analysis fails, fall back to normal processing
+                do { return try process(url) } catch { return url }
+            }
+        } else {
+            do { return try process(url) } catch { return url }
+        }
+    }
+    
+    // Analyze audio quality to determine if preprocessing is beneficial
+    static func analyzeAudioQuality(_ url: URL) throws -> AudioQualityAnalysis {
+        var samples = try decodeToFloatMono16k(url: url)
+        guard !samples.isEmpty else {
+            return AudioQualityAnalysis(needsProcessing: false, snr: 0, hasLowFrequencyNoise: false, peakLevel: 0)
+        }
+        
+        // Analyze key quality metrics
+        let snr = estimateSNR(samples)
+        let hasLowFreqNoise = detectLowFrequencyNoise(samples)
+        let peakLevel = samples.map(abs).max() ?? 0
+        let rmsLevel = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(samples.count))
+        
+        let needsProcessing = snr < 15.0 ||  // Poor SNR
+                             hasLowFreqNoise ||  // Low frequency rumble
+                             peakLevel < 0.1 ||  // Very quiet audio
+                             rmsLevel > 0.7      // Over-amplified audio
+        
+        return AudioQualityAnalysis(
+            needsProcessing: needsProcessing,
+            snr: snr,
+            hasLowFrequencyNoise: hasLowFreqNoise,
+            peakLevel: peakLevel
+        )
+    }
+    
+    struct AudioQualityAnalysis {
+        let needsProcessing: Bool
+        let snr: Float           // Signal-to-noise ratio estimate
+        let hasLowFrequencyNoise: Bool
+        let peakLevel: Float     // Peak amplitude level
+    }
+    
+    // Estimate signal-to-noise ratio using spectral analysis
+    private static func estimateSNR(_ samples: [Float]) -> Float {
+        // Simple SNR estimation: ratio of signal power to noise floor
+        // Take samples in quiet periods (low amplitude) as noise estimate
+        let sortedAmplitudes = samples.map(abs).sorted()
+        let noiseFloor = sortedAmplitudes.prefix(sortedAmplitudes.count / 4).reduce(0, +) / Float(sortedAmplitudes.count / 4)
+        let signalLevel = sortedAmplitudes.suffix(sortedAmplitudes.count / 4).reduce(0, +) / Float(sortedAmplitudes.count / 4)
+        
+        guard noiseFloor > 0 else { return 40.0 } // Assume good SNR if no measurable noise
+        let snr = 20 * log10(signalLevel / noiseFloor)
+        return max(0, min(40, snr)) // Clamp to reasonable range
+    }
+    
+    // Detect low-frequency noise/rumble
+    private static func detectLowFrequencyNoise(_ samples: [Float]) -> Bool {
+        // Simple high-pass filter to isolate low frequencies
+        let filtered = highPass(samples, cutoffHz: 120, sampleRate: 16000) // Higher cutoff for detection
+        let originalRMS = sqrt(samples.map { $0 * $0 }.reduce(0, +) / Float(samples.count))
+        let filteredRMS = sqrt(filtered.map { $0 * $0 }.reduce(0, +) / Float(filtered.count))
+        
+        // If filtering removes significant energy, there was low-frequency content
+        let energyReduction = (originalRMS - filteredRMS) / originalRMS
+        return energyReduction > 0.15 // 15% energy in low frequencies indicates rumble
     }
 
     static func process(_ url: URL) throws -> URL {

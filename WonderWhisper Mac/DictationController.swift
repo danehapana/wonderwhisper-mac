@@ -17,6 +17,8 @@ actor DictationController {
     private var currentRecordingURL: URL?
     private var preCapturedScreenText: String?
     private var preCapturedScreenMethod: String?
+    
+    // Removed memory recording feature due to unreliable output
 
     init(recorder: AudioRecorder,
          transcriber: TranscriptionProvider,
@@ -41,8 +43,11 @@ actor DictationController {
         case .idle, .error:
             do {
                 AppLog.dictation.log("Recording start")
+                
+                // Always use file-based recording (memory recording removed due to unreliable output)
                 let url = try recorder.startRecording()
                 currentRecordingURL = url
+                
                 // If AssemblyAI v3 streaming is active, begin live session and stream mic frames
                 if let aai = transcriber as? AssemblyAIStreamingProvider {
                     try await aai.beginRealtimeSession(sampleRate: 16_000)
@@ -77,36 +82,42 @@ actor DictationController {
         // Stop live streaming if active
         if transcriber is AssemblyAIStreamingProvider { recorder.stopStreamingPCM16() }
         if transcriber is DeepgramStreamingProvider { recorder.stopStreamingPCM16() }
-        let maybeURL = await recorder.stopRecordingAndWait()
-        guard let fileURL = maybeURL else { state = .error("No recording file"); return }
-
+        
+        var recordingFileURL: URL? = nil // Track the file URL for history - defined at function scope
+        
         do {
             let overallStart = Date()
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path), let size = attrs[.size] as? NSNumber {
-            let providerType = String(describing: type(of: transcriber))
-            AppLog.dictation.log("Transcription start provider=\(providerType) file=\(fileURL.lastPathComponent) size=\(size.intValue)")
-            } else {
-                let providerType = String(describing: type(of: transcriber))
-                AppLog.dictation.log("Transcription start provider=\(providerType) file=\(fileURL.lastPathComponent)")
-            }
             state = .transcribing
             let t0 = Date()
             var transcript: String = ""
             let hotkeySettings = TranscriptionSettings(endpoint: transcriberSettings.endpoint, model: transcriberSettings.model, timeout: transcriberSettings.timeout, context: "hotkey")
+            
+            // Handle streaming providers first
             if let aai = transcriber as? AssemblyAIStreamingProvider {
                 // Prefer the live session's final transcript for speed
                 transcript = try await aai.endRealtimeSessionAndGetTranscript()
                 // If empty (fallback), run file-based for safety
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let maybeURL = await recorder.stopRecordingAndWait()
+                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
+                    recordingFileURL = fileURL
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else if let dg = transcriber as? DeepgramStreamingProvider {
                 // Prefer Deepgram live session transcript gathered during recording
                 transcript = try await dg.endRealtime()
                 if transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    let maybeURL = await recorder.stopRecordingAndWait()
+                    guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
+                    recordingFileURL = fileURL
                     transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
                 }
             } else {
+                // Standard file-based transcription for non-streaming providers
+                let maybeURL = await recorder.stopRecordingAndWait()
+                guard let fileURL = maybeURL else { throw NSError(domain: "DictationController", code: -1, userInfo: [NSLocalizedDescriptionKey: "No recording file"]) }
+                recordingFileURL = fileURL
+                AppLog.dictation.log("Transcription start (file) provider=\(String(describing: type(of: self.transcriber))) file=\(fileURL.lastPathComponent)")
                 transcript = try await transcriber.transcribe(fileURL: fileURL, settings: hotkeySettings)
             }
             let transcribeDT = Date().timeIntervalSince(t0)
@@ -174,7 +185,7 @@ actor DictationController {
             let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
             let totalDT = Date().timeIntervalSince(overallStart)
             await history?.append(
-                fileURL: currentRecordingURL,
+                fileURL: recordingFileURL ?? currentRecordingURL,
                 appName: appName,
                 bundleID: bundleID,
                 transcript: transcript,
@@ -196,7 +207,7 @@ actor DictationController {
             // Persist audio so the user can reprocess later even on failure
             let (appName, bundleID) = screenContext.frontmostAppNameAndBundle()
             await history?.append(
-                fileURL: fileURL,
+                fileURL: recordingFileURL,
                 appName: appName,
                 bundleID: bundleID,
                 transcript: "",

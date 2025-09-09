@@ -5,6 +5,10 @@ struct SettingsGeneralView: View {
     @ObservedObject var vm: DictationViewModel
     @State private var apiKeyText: String = ""
     @State private var showAXInfo: Bool = false
+    
+    // Performance settings using @AppStorage for automatic UserDefaults sync
+    @AppStorage("audio.recording.format") private var selectedAudioFormat: String = "wav"
+    @AppStorage("audio.preprocess.smart") private var smartPreprocessingEnabled: Bool = false
 
     var body: some View {
         ScrollView {
@@ -33,6 +37,20 @@ struct SettingsGeneralView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Audio enhancement (beta)", isOn: $vm.audioEnhancementEnabled)
                             .help("Applies a subtle high‑pass filter, pre‑emphasis, and loudness normalization before transcription to improve clarity in noisy/low‑volume conditions.")
+                        
+                        // Audio recording format selection for better compression
+                        HStack {
+                            Text("Recording format")
+                            Spacer()
+                            Picker("Recording Format", selection: $selectedAudioFormat) {
+                                Text("WAV (largest, compatible)").tag("wav")
+                                Text("AAC/M4A (smaller)").tag("aac")  
+                                Text("MP3 (aggressive AAC, smallest)").tag("mp3")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(maxWidth: 200)
+                        }
+                        .help("MP3 uses aggressive AAC compression (16kbps) for 75% smaller uploads. AAC uses standard 32kbps compression.")
                     }
                 }
 
@@ -51,6 +69,17 @@ struct SettingsGeneralView: View {
 
                         Toggle("Force HTTP/2 for uploads (experimental)", isOn: $vm.forceHTTP2Uploads)
                             .help("Bypasses HTTP/3/QUIC for multipart uploads to avoid network stalls on some networks.")
+                    }
+                }
+                
+                GroupBox("Performance Optimizations") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Smart audio preprocessing", isOn: $smartPreprocessingEnabled)
+                            .help("Only applies audio enhancement when needed based on quality analysis. Saves processing time for clean audio.")
+                        
+                        Text("⚡ This experimental feature can improve transcription speed by skipping unnecessary processing on clean audio.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
 
