@@ -97,7 +97,7 @@ final class HotkeyManager {
                 // id: 1 => toggle; 2 => paste
                 if kind == UInt32(kEventHotKeyPressed) {
                     if hkID.id == 1 { selfRef.handleHotkeyDown() }
-                    else if hkID.id == 2 { selfRef.handlePasteDown() }
+                    // For paste, we act on key UP to avoid modifier interference
                 } else if kind == UInt32(kEventHotKeyReleased) {
                     if hkID.id == 1 { selfRef.handleHotkeyUp() }
                     else if hkID.id == 2 { selfRef.handlePasteUp() }
@@ -110,7 +110,11 @@ final class HotkeyManager {
         let status: OSStatus = specs.withUnsafeBufferPointer { buf in
             InstallEventHandler(target, callback, Int(buf.count), buf.baseAddress, userPtr, &eventHandlerRef)
         }
-        guard status == noErr else { return }
+        if status == noErr {
+            AppLog.hotkeys.log("Installed Carbon event handler for hotkeys")
+        } else {
+            AppLog.hotkeys.error("Failed to install EventHandler: status=\(status)")
+        }
     }
 
     private func registerCarbonHotkeyForToggle() {
@@ -120,8 +124,16 @@ final class HotkeyManager {
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x57574854), id: 1) // 'WWHT'
         var hkRef: EventHotKeyRef?
-        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
-        if status == noErr, let hkRef { self.toggleHotKeyRef = hkRef }
+        var status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
+        if status != noErr || hkRef == nil {
+            status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetEventDispatcherTarget(), 0, &hkRef)
+        }
+        if status == noErr, let hkRef {
+            self.toggleHotKeyRef = hkRef
+            AppLog.hotkeys.log("Registered toggle hotkey keyCode=\(shortcut.keyCode) mods=\(shortcut.modifiers) status=\(status)")
+        } else {
+            AppLog.hotkeys.error("Failed to register toggle hotkey (key=\(shortcut.keyCode), mods=\(shortcut.modifiers)), status=\(status)")
+        }
     }
 
     private func registerCarbonHotkeyForPaste() {
@@ -131,8 +143,17 @@ final class HotkeyManager {
 
         let hotKeyID = EventHotKeyID(signature: OSType(0x57575056), id: 2) // 'WWPV'
         var hkRef: EventHotKeyRef?
-        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
-        if status == noErr, let hkRef { self.pasteHotKeyRef = hkRef }
+        var status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hkRef)
+        if status != noErr || hkRef == nil {
+            // Try dispatcher target as a fallback for background delivery
+            status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID, GetEventDispatcherTarget(), 0, &hkRef)
+        }
+        if status == noErr, let hkRef {
+            self.pasteHotKeyRef = hkRef
+            AppLog.hotkeys.log("Registered paste hotkey keyCode=\(shortcut.keyCode) mods=\(shortcut.modifiers) status=\(status)")
+        } else {
+            AppLog.hotkeys.error("Failed to register paste hotkey (key=\(shortcut.keyCode), mods=\(shortcut.modifiers)), status=\(status)")
+        }
     }
 
     private func unregisterCarbonHotkey(ref: inout EventHotKeyRef?) {
@@ -265,12 +286,16 @@ final class HotkeyManager {
         }
     }
 
-    private func handlePasteDown() {
-        onPaste?()
-    }
 
     private func handlePasteUp() {
-        // no-op for now
+        // Fire on key up with a slight delay to let user release modifiers
+        let app = NSWorkspace.shared.frontmostApplication
+        let name = app?.localizedName ?? "?"
+        let bundle = app?.bundleIdentifier ?? "?"
+        AppLog.hotkeys.log("Paste hotkey released; will paste into frontmost=\(name) (\(bundle)) after delay")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.onPaste?()
+        }
     }
 
     static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {

@@ -10,12 +10,10 @@ final class InsertionService {
         if let bundleID = Bundle.main.bundleIdentifier,
            NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleID,
            insertIntoFirstResponder(text) {
-            AppLog.insertion.log("Direct insert into in-app first responder")
             return
         }
         // Strategy 1: AX direct insertion when enabled
         if useAXInsertion, setFocusedAXValue(text) {
-            AppLog.insertion.log("AX insertion succeeded")
             return
         }
         // Fallback: write to pasteboard (optionally as rich text) + Command-V with clipboard restore
@@ -41,12 +39,57 @@ final class InsertionService {
         pb.writeObjects([item])
 
         let ourChange = pb.changeCount
-        AppLog.insertion.log("Fallback paste + Cmd+V (with clipboard restore)")
-        synthesizeCmdV()
+        // Paste strategy selection order:
+        // 1) Try AX menu Paste
+        // 2) If not available, prefer AppleScript for known-problematic apps (Slack/Electron/Chromium)
+        // 3) Otherwise synthesize Command+V via CGEvent
+        if axPressPasteInFrontApp() {
+            // AX menu Paste succeeded
+        } else {
+            let frontBundle = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
+            if shouldPreferAppleScript(for: frontBundle) || UserDefaults.standard.bool(forKey: "insertion.useAppleScriptPaste") {
+                if !pasteUsingAppleScript() {
+                    // AppleScript failed (permission or other); fall back
+                    synthesizeCmdV()
+                }
+            } else {
+                synthesizeCmdV()
+            }
+        }
         let delay: TimeInterval = 0.45
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.restorePasteboard(snapshot, ifChangeCountEquals: ourChange)
         }
+    }
+
+    private func shouldPreferAppleScript(for bundleID: String) -> Bool {
+        // Known apps where CGEvent Cmd+V can be ignored intermittently
+        let prefer: Set<String> = [
+            "com.tinyspeck.slackmacgap",     // Slack
+            "com.google.Chrome",             // Chrome
+            "com.brave.Browser",             // Brave
+            "com.microsoft.edgemac",         // Edge
+            "org.mozilla.firefox"            // Firefox
+        ]
+        if prefer.contains(bundleID) { return true }
+        // Heuristic: Electron-based apps often have bundle IDs containing "electron"
+        return bundleID.lowercased().contains("electron")
+    }
+
+    private func pasteUsingAppleScript() -> Bool {
+        // Requires Automation (Apple Events) permission to control System Events
+        let script = """
+        tell application "System Events"
+            keystroke "v" using command down
+        end tell
+        """
+        var err: NSDictionary?
+        let ok = NSAppleScript(source: script)?.executeAndReturnError(&err) != nil
+        if !ok {
+            let msg = (err?[NSAppleScript.errorMessage as String] as? String) ?? "unknown error"
+            AppLog.insertion.error("AppleScript paste error: \(msg)")
+        }
+        return ok
     }
 
     private func insertIntoFirstResponder(_ text: String) -> Bool {
@@ -70,18 +113,90 @@ final class InsertionService {
     }
 
     private func synthesizeCmdV() {
-        AppLog.insertion.log("Synthesizing Cmd+V")
-        let src = CGEventSource(stateID: .combinedSessionState)
+        // Use HID system state to mimic real keyboard
+        let src = CGEventSource(stateID: .hidSystemState)
         let keyV: CGKeyCode = CGKeyCode(kVK_ANSI_V)
+        let keyCmd: CGKeyCode = 0x37 // left Command virtual key
 
-        let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyV, keyDown: true)
-        keyDown?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
+        // Detect currently held modifiers that could interfere with paste (not Command)
+        let modsToTempRelease: [CGKeyCode] = [
+            CGKeyCode(kVK_Control), CGKeyCode(kVK_RightControl),
+            CGKeyCode(kVK_Option),  CGKeyCode(kVK_RightOption),
+            CGKeyCode(kVK_Shift),   CGKeyCode(kVK_RightShift)
+        ].filter { CGEventSource.keyState(.hidSystemState, key: $0) }
 
-        let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyV, keyDown: false)
-        keyUp?.flags = .maskCommand
-        keyUp?.post(tap: .cghidEventTap)
+        // Temporarily release interfering modifiers (do NOT touch Command)
+        for code in modsToTempRelease {
+            let up = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)
+            up?.post(tap: .cghidEventTap)
+        }
+
+        // Explicit Command down
+        let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: keyCmd, keyDown: true)
+        cmdDown?.post(tap: .cghidEventTap)
+
+        // V down/up with Command flag set
+        let vDown = CGEvent(keyboardEventSource: src, virtualKey: keyV, keyDown: true)
+        vDown?.flags = .maskCommand
+        vDown?.post(tap: .cghidEventTap)
+
+        let vUp = CGEvent(keyboardEventSource: src, virtualKey: keyV, keyDown: false)
+        vUp?.flags = .maskCommand
+        vUp?.post(tap: .cghidEventTap)
+
+        // Command up
+        let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: keyCmd, keyDown: false)
+        cmdUp?.post(tap: .cghidEventTap)
+
+        // Restore previously held modifiers
+        for code in modsToTempRelease {
+            let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)
+            down?.post(tap: .cghidEventTap)
+        }
     }
+
+    private func axPressPasteInFrontApp() -> Bool {
+        // Requires Accessibility permission; works under sandbox
+        let ws = NSWorkspace.shared
+        guard let app = ws.frontmostApplication else { return false }
+        let appAX = AXUIElementCreateApplication(app.processIdentifier)
+        var menubarObj: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appAX, kAXMenuBarAttribute as CFString, &menubarObj) == .success,
+              let menubarCF = menubarObj else { return false }
+        let menubar = menubarCF as! AXUIElement
+        if let item = findPasteMenuItem(in: menubar) {
+            let res = AXUIElementPerformAction(item, kAXPressAction as CFString)
+            return res == .success
+        }
+        return false
+    }
+
+    private func findPasteMenuItem(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        if depth > 6 { return nil } // avoid runaway recursion
+        var childrenObj: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenObj) != .success { return nil }
+        guard let children = childrenObj as? [AXUIElement] else { return nil }
+        for child in children {
+            // Check if this child is a menu item that looks like Paste
+            var roleObj: CFTypeRef?
+            _ = AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleObj)
+            let role = roleObj as? String ?? ""
+            if role == (kAXMenuItemRole as String) {
+                var titleObj: CFTypeRef?
+                _ = AXUIElementCopyAttributeValue(child, kAXTitleAttribute as CFString, &titleObj)
+                let title = (titleObj as? String)?.lowercased() ?? ""
+                var cmdCharObj: CFTypeRef?
+                _ = AXUIElementCopyAttributeValue(child, kAXMenuItemCmdCharAttribute as CFString, &cmdCharObj)
+                let cmdChar = (cmdCharObj as? String)?.lowercased()
+                if title.contains("paste") || cmdChar == "v" {
+                    return child
+                }
+            }
+            if let found = findPasteMenuItem(in: child, depth: depth + 1) { return found }
+        }
+        return nil
+    }
+
 
     // MARK: - Formatting helpers
     private func buildHTMLData(from text: String) -> Data? {
@@ -158,6 +273,6 @@ final class InsertionService {
         if !newItems.isEmpty {
             pb.writeObjects(newItems as [NSPasteboardWriting])
         }
-        AppLog.insertion.log("Clipboard restored after paste")
+
     }
 }
