@@ -9,6 +9,9 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     private var asrManager: AsrManager?
     private var modelsDirectory: URL
     private let log = Logger(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "Parakeet")
+    // Idle unload after inactivity to balance memory and reliability
+    private var idleUnloadTask: Task<Void, Never>?
+    private let idleSeconds: TimeInterval = 600 // 10 minutes
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -16,6 +19,34 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         } else {
             // Prefer any discovered existing install
             self.modelsDirectory = ParakeetManager.effectiveModelsDirectory
+        }
+    }
+
+    // Public warm-up to preload models on recording start
+    func warmUp() async {
+        do {
+            try await ensureModelsLoaded()
+            scheduleIdleUnload()
+        } catch {
+            let ns = error as NSError
+            log.notice("[Parakeet] warmUp failed: \(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public)")
+            AppLog.dictation.error("[Parakeet] warmUp failed: domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+        }
+    }
+
+    private func scheduleIdleUnload() {
+        idleUnloadTask?.cancel()
+        idleUnloadTask = Task { [weak self] in
+            guard let self else { return }
+            // Sleep for idle window; cancel will abort
+            try? await Task.sleep(nanoseconds: UInt64(self.idleSeconds * 1_000_000_000))
+            if Task.isCancelled { return }
+            if let mgr = self.asrManager {
+                self.log.notice("[Parakeet] Idle timeout (\(Int(self.idleSeconds))s) — unloading models")
+                AppLog.dictation.log("[Parakeet] idle unload")
+                mgr.cleanup()
+                self.asrManager = nil
+            }
         }
     }
 
@@ -57,10 +88,12 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         }
         #endif
         asrManager = mgr
+        scheduleIdleUnload()
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
         try await ensureModelsLoaded()
+        scheduleIdleUnload()
         guard let mgr = asrManager else { throw ProviderError.notImplemented }
         // Cache lookup
         let preprocessingEnabled = false
@@ -109,6 +142,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         let result: ASRResult
         do {
             result = try await mgr.transcribe(samples)
+            // Reset decoder state for next session while keeping models warm
+            try? await mgr.resetDecoderState(for: .microphone)
         } catch {
             let ns = error as NSError
             log.notice("[Parakeet] mgr.transcribe error=\(ns.localizedDescription, privacy: .public) domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public) userInfo=\(String(describing: ns.userInfo), privacy: .public)")
@@ -123,6 +158,7 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
         if let key = TranscriptionCache.shared.key(for: fileURL, provider: "parakeet", model: settings.model, language: nil, preprocessing: preprocessingEnabled) {
             TranscriptionCache.shared.store(key, result: text)
         }
+        scheduleIdleUnload()
         return text
     }
 

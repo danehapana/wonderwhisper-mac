@@ -50,7 +50,12 @@ actor DictationController {
                 // Always use file-based recording (memory recording removed due to unreliable output)
                 let url = try recorder.startRecording()
                 currentRecordingURL = url
-                
+
+                // If Parakeet is active, preload models in the background to hide cold-start latency
+                if let pk = transcriber as? ParakeetTranscriptionProvider {
+                    Task { await pk.warmUp() }
+                }
+
                 // If AssemblyAI v3 streaming is active, begin live session and stream mic frames
                 if let aai = transcriber as? AssemblyAIStreamingProvider {
                     try await aai.beginRealtimeSession(sampleRate: 16_000)
