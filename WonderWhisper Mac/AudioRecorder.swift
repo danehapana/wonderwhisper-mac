@@ -220,8 +220,11 @@ extension AudioRecorder {
         self.converter = converter
         pcmAccumulator.removeAll(keepingCapacity: true)
 
-        // 50ms at 16kHz = 800 samples (mono) = 1600 bytes
-        let chunkBytes = 800 * 2
+        // Stream chunk size: default 30ms at 16kHz; configurable via UserDefaults("audio.stream.chunkMs")
+        let configuredMs = UserDefaults.standard.integer(forKey: "audio.stream.chunkMs")
+        let chunkMs = configuredMs > 0 ? configuredMs : 30
+        // samplesPerMs at 16kHz = 16; bytesPerSample (Int16) = 2
+        let chunkBytes = chunkMs * 16 * 2
 
         do {
             engine.prepare()

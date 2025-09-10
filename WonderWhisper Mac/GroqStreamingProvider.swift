@@ -9,7 +9,12 @@ final class GroqStreamingProvider: TranscriptionProvider {
     private let client: GroqHTTPClient
 
     // Chunking configuration
-    private let chunkDurationSeconds: Double = 3.0  // 3 second chunks for good balance
+    // Default to ~0.8s chunks for lower latency; configurable via UserDefaults("groq.stream.chunkSeconds")
+    private let chunkDurationSeconds: Double = {
+        let d = UserDefaults.standard.double(forKey: "groq.stream.chunkSeconds")
+        // Clamp between 0.4s and 2.0s to avoid too-small or too-large requests
+        return d > 0 ? max(0.4, min(2.0, d)) : 0.8
+    }()
     private let sampleRate: Double = 16_000.0       // 16kHz for optimal Groq performance
     private let bytesPerSecond: Int = 32_000        // 16kHz * 2 bytes per sample
 
@@ -19,7 +24,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
     private var currentSettings: TranscriptionSettings?
     private let uploadQueue = DispatchQueue(label: "groq.upload.queue", qos: .userInitiated)
     private let uploads = UploadTaskBag()
-    private let limiter = RateLimiter(max: 4)
+    private let limiter: RateLimiter
 
     // Serialize audio buffering/chunking to avoid data races
     private let chunker: Chunker
@@ -27,6 +32,10 @@ final class GroqStreamingProvider: TranscriptionProvider {
     init(client: GroqHTTPClient) {
         self.client = client
         self.chunker = Chunker(chunkSizeBytes: Int(chunkDurationSeconds * Double(bytesPerSecond)))
+        // Limit concurrent uploads to reduce network contention; configurable via UserDefaults("groq.stream.maxInflight")
+        let maxInflight = UserDefaults.standard.integer(forKey: "groq.stream.maxInflight")
+        let bounded = max(1, min(4, maxInflight == 0 ? 3 : maxInflight))
+        self.limiter = RateLimiter(max: bounded)
     }
 
     // Actor responsible for safely accumulating PCM data and emitting full chunks
@@ -152,7 +161,8 @@ final class GroqStreamingProvider: TranscriptionProvider {
         }
 
         // Upload any remaining audio in buffer as final chunk if we have meaningful data
-        if let remainder = await chunker.flushRemainder(minBytes: 1000) { // ~60ms threshold
+        let minFlushBytes = Int(0.25 * chunkDurationSeconds * Double(bytesPerSecond)) // ~25% of chunk size
+        if let remainder = await chunker.flushRemainder(minBytes: minFlushBytes) {
             AppLog.dictation.log("GroqStreaming: Uploading final chunk with \(remainder.payload.count) bytes")
             do {
                 let wavData = try createWAVFile(from: remainder.payload)

@@ -284,7 +284,7 @@ struct GroqHTTPClient {
         request.setValue(reqId, forHTTPHeaderField: "X-WW-Request-ID")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("gzip, deflate, br, lzfse", forHTTPHeaderField: "Accept-Encoding")
-        request.networkServiceType = .responsiveData
+        request.networkServiceType = .voice
 
         // Set compression headers if body was compressed
         if shouldCompress {
@@ -293,60 +293,73 @@ struct GroqHTTPClient {
 
         request.httpBody = finalBody
 
-        // Parallel upload strategy: Try both URLSession and curl HTTP/2 simultaneously, use fastest result
-        return try await withThrowingTaskGroup(of: Data.self) { group in
-            // Task 1: URLSession with priority session for maximum speed
-            group.addTask {
-                var priorityRequest = request
-                priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
-                priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
-
-                let (data, response) = try await Self.prioritySession.data(for: priorityRequest)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+        // Parallel upload strategy with retries: race priority/standard (and optional curl/h2), retry on transient failures
+        var attempt = 0
+        var lastError: Error?
+        while attempt < 3 {
+            attempt += 1
+            do {
+                let result: Data = try await withThrowingTaskGroup(of: Data.self) { group in
+                    // Task 1: URLSession with priority session for maximum speed
+                    group.addTask {
+                        var priorityRequest = request
+                        priorityRequest.setValue("max-age=0", forHTTPHeaderField: "Cache-Control")
+                        priorityRequest.setValue("gzip, deflate, br", forHTTPHeaderField: "Accept-Encoding")
+                        let (data, response) = try await Self.prioritySession.data(for: priorityRequest)
+                        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                            throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                        }
+                        return data
+                    }
+                    // Task 2: Standard URLSession as fallback
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
+                        let (data, response) = try await dataWithAttemptTimeout(for: request)
+                        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                            throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
+                        }
+                        return data
+                    }
+                    // Task 3: Curl HTTP/2 as final fallback (with delay)
+                    if AppConfig.forceHTTP2ForUploads {
+                        group.addTask {
+                            try await Task.sleep(nanoseconds: 200_000_000) // 0.2s delay
+                            return try await self.postMultipartViaCurl(
+                                url: url,
+                                fields: fields,
+                                files: files,
+                                timeout: timeout,
+                                context: context,
+                                reqId: reqId
+                            )
+                        }
+                    }
+                    guard let result = try await group.next() else {
+                        throw ProviderError.notImplemented
+                    }
+                    group.cancelAll()
+                    return result
                 }
-                return data
+                let elapsed = Date().timeIntervalSince(start)
+                AppLog.network.log("Parallel upload completed req=\(reqId) attempt=\(attempt) in \(elapsed, format: .fixed(precision: 3))s")
+                return result
+            } catch {
+                lastError = error
+                let nsErr = error as NSError
+                // Retry only on transient network errors and timeouts
+                let shouldRetry = nsErr.domain == NSURLErrorDomain && (nsErr.code == NSURLErrorTimedOut || nsErr.code == NSURLErrorNetworkConnectionLost || nsErr.code == NSURLErrorCannotFindHost || nsErr.code == NSURLErrorCannotConnectToHost)
+                if attempt >= 3 || !shouldRetry { throw error }
+                // Exponential backoff with jitter (mirrors performWithRetry)
+                let base: Double = 0.5
+                let backoff = pow(2.0, Double(attempt - 1)) * base
+                let jitter = Double.random(in: 0...(base * 0.5))
+                let delay = backoff + jitter
+                AppLog.network.log("Retrying multipart req=\(reqId) in \(String(format: "%.2f", delay))s (attempt \(attempt+1)/3)")
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                continue
             }
-
-            // Task 2: Standard URLSession as fallback
-            group.addTask {
-                // Add small delay to prefer priority session
-                try await Task.sleep(nanoseconds: 100_000_000) // 0.1s delay
-
-                let (data, response) = try await dataWithAttemptTimeout(for: request)
-                if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                    throw ProviderError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
-                }
-                return data
-            }
-
-            // Task 3: Curl HTTP/2 as final fallback (with delay)
-            if AppConfig.forceHTTP2ForUploads {
-                group.addTask {
-                    try await Task.sleep(nanoseconds: 200_000_000) // 0.2s delay
-                    return try await self.postMultipartViaCurl(
-                        url: url,
-                        fields: fields,
-                        files: files,
-                        timeout: timeout,
-                        context: context,
-                        reqId: reqId
-                    )
-                }
-            }
-
-            // Return the first successful result
-            guard let result = try await group.next() else {
-                throw ProviderError.notImplemented
-            }
-
-            let elapsed = Date().timeIntervalSince(start)
-            AppLog.network.log("Parallel upload completed req=\(reqId) in \(elapsed, format: .fixed(precision: 3))s")
-
-            // Cancel remaining tasks
-            group.cancelAll()
-            return result
         }
+        throw lastError ?? ProviderError.notImplemented
     }
 }
 

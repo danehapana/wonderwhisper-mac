@@ -56,7 +56,8 @@ final class InsertionService {
                 synthesizeCmdV()
             }
         }
-        let delay: TimeInterval = 0.45
+        let fast = UserDefaults.standard.bool(forKey: "insertion.fastMode")
+        let delay: TimeInterval = fast ? 0.12 : 0.45
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.restorePasteboard(snapshot, ifChangeCountEquals: ourChange)
         }

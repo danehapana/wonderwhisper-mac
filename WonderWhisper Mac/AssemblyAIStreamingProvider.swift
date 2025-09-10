@@ -29,13 +29,16 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
     // AssemblyAI Realtime v3 endpoint (WebSocket). Sample rate must match audio sent.
     // Reference: https://www.assemblyai.com/docs/api-reference/streaming-api/streaming-api
     let sampleRate: Double = 16_000
-    // Tunable end-of-turn parameters per v3 best practices
+    // Tunable end-of-turn parameters; allow a fast endpointing mode
+    let fast = UserDefaults.standard.bool(forKey: "transcription.fastEndpointing")
+    let minSilence = fast ? 120 : 160
+    let maxSilence = fast ? 600 : 2400
     let query = [
       "sample_rate=\(Int(sampleRate))",
       "format_turns=true",
       "end_of_turn_confidence_threshold=0.6",
-      "min_end_of_turn_silence_when_confident=160",
-      "max_turn_silence=2400"
+      "min_end_of_turn_silence_when_confident=\(minSilence)",
+      "max_turn_silence=\(maxSilence)"
     ].joined(separator: "&")
     guard let url = URL(string: "wss://streaming.assemblyai.com/v3/ws?\(query)") else {
       throw ProviderError.invalidURL
@@ -82,12 +85,15 @@ final class AssemblyAIStreamingProvider: TranscriptionProvider {
   // MARK: - Realtime v3 live session API
   func beginRealtimeSession(sampleRate: Double = 16_000) async throws {
     guard liveTask == nil else { return }
+    let fast = UserDefaults.standard.bool(forKey: "transcription.fastEndpointing")
+    let minSilence = fast ? 120 : 160
+    let maxSilence = fast ? 600 : 2400
     let query = [
       "sample_rate=\(Int(sampleRate))",
       "format_turns=true",
       "end_of_turn_confidence_threshold=0.6",
-      "min_end_of_turn_silence_when_confident=160",
-      "max_turn_silence=2400"
+      "min_end_of_turn_silence_when_confident=\(minSilence)",
+      "max_turn_silence=\(maxSilence)"
     ].joined(separator: "&")
     guard let url = URL(string: "wss://streaming.assemblyai.com/v3/ws?\(query)") else {
       throw ProviderError.invalidURL

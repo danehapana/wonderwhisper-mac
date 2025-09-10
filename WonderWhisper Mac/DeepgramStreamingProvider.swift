@@ -50,9 +50,27 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
       AppLog.dictation.error("Deepgram: API key is missing or empty")
       throw ProviderError.missingAPIKey
     }
-    
-    // Enhanced URL with proper parameters for optimal streaming
-    guard let url = URL(string: "wss://api.deepgram.com/v1/listen?model=nova-2&language=en-US&smart_format=true&punctuate=true&encoding=linear16&sample_rate=16000&channels=1&endpointing=true&interim_results=true&filler_words=false&profanity_filter=false") else {
+
+    // Build URL with parameters; allow fast-path formatting toggle and explicit language
+    var comps = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
+    let lang = UserDefaults.standard.string(forKey: "transcription.language") ?? "en-US"
+    let fastFmt = UserDefaults.standard.bool(forKey: "transcription.fastFormatting")
+    let smart = fastFmt ? "false" : "true"
+    let punct = fastFmt ? "false" : "true"
+    comps.queryItems = [
+      URLQueryItem(name: "model", value: "nova-2"),
+      URLQueryItem(name: "language", value: lang),
+      URLQueryItem(name: "smart_format", value: smart),
+      URLQueryItem(name: "punctuate", value: punct),
+      URLQueryItem(name: "encoding", value: "linear16"),
+      URLQueryItem(name: "sample_rate", value: "16000"),
+      URLQueryItem(name: "channels", value: "1"),
+      URLQueryItem(name: "endpointing", value: "true"),
+      URLQueryItem(name: "interim_results", value: "true"),
+      URLQueryItem(name: "filler_words", value: "false"),
+      URLQueryItem(name: "profanity_filter", value: "false")
+    ]
+    guard let url = comps.url else {
       AppLog.dictation.error("Deepgram: Failed to create WebSocket URL")
       throw ProviderError.invalidURL
     }
@@ -84,11 +102,9 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
     self.keepAliveTask = Task { [weak self] in
       await self?.keepAliveLoop(task: task)
     }
-    
+
     AppLog.dictation.log("Deepgram: WebSocket connection initiated successfully")
-    
-    // Brief delay to allow connection to start establishing
-    try? await Task.sleep(nanoseconds: 200_000_000) // 200ms - much shorter, non-blocking
+    // No artificial delay; first successful send will confirm readiness
   }
 
   func feedPCM16(_ data: Data) async throws {
@@ -342,7 +358,7 @@ final class DeepgramStreamingProvider: TranscriptionProvider {
           let bytes = UnsafeBufferPointer(start: p, count: Int(out.frameLength))
           let data = Data(buffer: bytes)
           try await task.send(.data(data))
-          try await Task.sleep(nanoseconds: 50_000_000)
+          try await Task.sleep(nanoseconds: 30_000_000)
         }
       case .endOfStream: eof = true
       default: eof = true
