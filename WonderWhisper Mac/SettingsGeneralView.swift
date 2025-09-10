@@ -30,6 +30,8 @@ struct SettingsGeneralView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle("Use AX direct insertion (faster when supported)", isOn: $vm.useAXInsertion)
                             .help("Requires Accessibility permission. Falls back to paste if not supported.")
+                        Toggle("Paste with formatting (HTML/RTF)", isOn: $vm.pasteFormatted)
+                            .help("Preserves paragraph spacing in apps that support rich text; falls back to plain text elsewhere.")
                     }
                 }
 

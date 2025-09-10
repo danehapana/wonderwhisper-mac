@@ -89,6 +89,9 @@ final class DictationViewModel: ObservableObject {
 
     // Insertion
     @Published var useAXInsertion: Bool = UserDefaults.standard.object(forKey: "insertion.useAX") as? Bool ?? false { didSet { updateInsertion() } }
+    @Published var pasteFormatted: Bool = UserDefaults.standard.object(forKey: "insertion.pasteFormatted") as? Bool ?? false {
+        didSet { UserDefaults.standard.set(pasteFormatted, forKey: "insertion.pasteFormatted") }
+    }
 
     init() {
         // Capture persisted settings locally to avoid referencing self before all properties are initialized
