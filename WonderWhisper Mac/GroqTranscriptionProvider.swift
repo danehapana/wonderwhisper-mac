@@ -1,6 +1,9 @@
 import Foundation
+import OSLog
+import os.signpost
 
 final class GroqTranscriptionProvider: TranscriptionProvider {
+    private let spLog = OSLog(subsystem: "com.slumdev88.wonderwhisper.WonderWhisper-Mac", category: "GroqFile-SP")
     private let client: GroqHTTPClient
 
     init(client: GroqHTTPClient) {
@@ -12,24 +15,30 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
     }
 
     func transcribe(fileURL: URL, settings: TranscriptionSettings) async throws -> String {
-        let inputURL = AudioPreprocessor.processIfEnabled(fileURL)
-        // Cache lookup
-        let preprocessingEnabled = UserDefaults.standard.bool(forKey: "audio.preprocess.enabled")
-        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: preprocessingEnabled),
+        // For Groq file uploads, avoid preprocessing if the source is already a compressed format
+        // (preprocessing expands to large WAV and hurts upload latency). Allow opt-in override.
+        let ext = fileURL.pathExtension.lowercased()
+        let isCompressed = ["mp3","m4a","aac","ogg","opus","flac"].contains(ext)
+        let allowPreprocCompressed = UserDefaults.standard.bool(forKey: "groq.file.preprocessCompressed")
+        let applyPreprocessing = AudioPreprocessor.isEnabled && (!isCompressed || allowPreprocCompressed)
+        let inputURL = applyPreprocessing ? AudioPreprocessor.processIfEnabled(fileURL) : fileURL
+
+        // Cache lookup keyed by whether preprocessing actually applied
+        if let key = TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: applyPreprocessing),
            let cached = TranscriptionCache.shared.lookup(key) {
             return cached
         }
-        
+
         // Memory-map audio to reduce peak memory and speed up reads
         let fileData = try Data(contentsOf: inputURL, options: .mappedIfSafe)
         let mime = mimeType(for: inputURL.pathExtension.lowercased())
-        
+
         return try await transcribeData(
             data: fileData,
             filename: inputURL.lastPathComponent,
             mimeType: mime,
             settings: settings,
-            cacheKey: TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: preprocessingEnabled)
+            cacheKey: TranscriptionCache.shared.key(for: inputURL, provider: "groq", model: settings.model, language: nil, preprocessing: applyPreprocessing)
         )
     }
     
@@ -45,10 +54,18 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             data: data
         )
         var fields: [String: String] = ["model": settings.model]
-        // Optional: tighten decoding by providing language if known
-        if let lang = Locale.preferredLanguages.first?.split(separator: "-").first { fields["language"] = String(lang) }
+        // Optional: tighten decoding by providing language if known (prefer explicit override)
+        if let forced = UserDefaults.standard.string(forKey: "transcription.language"), !forced.isEmpty {
+            fields["language"] = forced
+        } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
+            fields["language"] = String(lang)
+        }
         fields["temperature"] = "0"
         
+        // Signpost around upload+response to measure wall-clock
+        let signpostID = OSSignpostID(log: spLog)
+        os_signpost(.begin, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "filename=%{public}s model=%{public}s bytes=%{public}lu", filename, settings.model, UInt(data.count))
+        let t0 = Date()
         let responseData = try await client.postMultipart(
             to: settings.endpoint,
             fields: fields,
@@ -56,6 +73,8 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
             timeout: settings.timeout,
             context: settings.context
         )
+        let dt = Date().timeIntervalSince(t0)
+        os_signpost(.end, log: spLog, name: "GroqFileUpload", signpostID: signpostID, "elapsed=%.3f", dt)
         
         // Many OpenAI-compatible transcription endpoints return {"text": "..."}
         if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],

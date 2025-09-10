@@ -115,6 +115,24 @@ final class GroqStreamingProvider: TranscriptionProvider {
         accumulator = GroqTranscriptAccumulator(client: client)
 
         AppLog.dictation.log("GroqStreaming: Session initialized")
+
+        // Kick off a non-blocking warmup request to reduce cold-start latency on first chunk
+        if let settings = currentSettings {
+            Task.detached { [weak self] in
+                guard let self = self else { return }
+                let dur = UserDefaults.standard.double(forKey: "groq.stream.warmupSeconds")
+                let warmSec = dur > 0 ? max(0.15, min(0.6, dur)) : 0.30
+                let silentSamples = Int(warmSec * self.sampleRate)
+                let silence = Data(count: silentSamples * 2) // PCM16 zeros
+                do {
+                    let wav = try self.createWAVFile(from: silence)
+                    _ = try await self.uploadChunkToGroq(wavData: wav, filename: "warmup_\(Int(Date().timeIntervalSince1970)).wav", settings: settings, prompt: nil)
+                    AppLog.dictation.log("GroqStreaming: Warmup completed (\(warmSec, format: .fixed(precision: 2))s silence)")
+                } catch {
+                    AppLog.dictation.log("GroqStreaming: Warmup failed: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     /// Feed PCM16 audio data to the streaming session
@@ -171,7 +189,11 @@ final class GroqStreamingProvider: TranscriptionProvider {
                     AppLog.dictation.error("GroqStreaming: No settings available for final chunk")
                     return ""
                 }
-                let transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings)
+                let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
+                let maxPromptChars = promptChars > 0 ? max(40, min(400, promptChars)) : 120
+                let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
+                var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
+                transcript = postprocessLocalIfRequested(transcript)
                 await acc.addChunkResult(chunkNumber: remainder.number, transcript: transcript, isFinal: true)
             } catch {
                 AppLog.dictation.error("GroqStreaming: Final chunk upload failed: \(error)")
@@ -212,6 +234,11 @@ final class GroqStreamingProvider: TranscriptionProvider {
             // Create filename with chunk number for debugging
             let filename = "chunk_\(chunkNumber)_\(Int(Date().timeIntervalSince1970)).wav"
 
+            // Optional trailing prompt from previous text to improve boundary accuracy
+            let promptChars = UserDefaults.standard.integer(forKey: "groq.stream.promptTrailChars")
+            let maxPromptChars = promptChars > 0 ? max(40, min(400, promptChars)) : 120
+            let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
+
             // Upload to Groq
             guard let settings = currentSettings else {
                 AppLog.dictation.error("GroqStreaming: No settings available for chunk \(chunkNumber). This should not happen.")
@@ -221,11 +248,13 @@ final class GroqStreamingProvider: TranscriptionProvider {
                     model: AppConfig.defaultTranscriptionModel,
                     timeout: 30
                 )
-                let transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: fallbackSettings)
+                var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: fallbackSettings, prompt: prompt)
+                transcript = postprocessLocalIfRequested(transcript)
                 await acc.addChunkResult(chunkNumber: chunkNumber, transcript: transcript, isFinal: isFinal)
                 return
             }
-            let transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings)
+            var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
+            transcript = postprocessLocalIfRequested(transcript)
 
             // Add to accumulator
             await acc.addChunkResult(chunkNumber: chunkNumber, transcript: transcript, isFinal: isFinal)
@@ -239,7 +268,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
         }
     }
 
-    private func uploadChunkToGroq(wavData: Data, filename: String, settings: TranscriptionSettings) async throws -> String {
+    private func uploadChunkToGroq(wavData: Data, filename: String, settings: TranscriptionSettings, prompt: String?) async throws -> String {
         let file = GroqHTTPClient.MultipartFile(
             fieldName: "file",
             filename: filename,
@@ -252,9 +281,15 @@ final class GroqStreamingProvider: TranscriptionProvider {
             "temperature": "0"
         ]
 
-        // Add language if available
-        if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
+        // Add language if available (prefer explicit override)
+        if let forced = UserDefaults.standard.string(forKey: "transcription.language"), !forced.isEmpty {
+            fields["language"] = forced
+        } else if let lang = Locale.preferredLanguages.first?.split(separator: "-").first {
             fields["language"] = String(lang)
+        }
+        // Provide trailing context to improve boundary accuracy (if supported)
+        if let prompt, !prompt.isEmpty {
+            fields["prompt"] = prompt
         }
 
         let responseData = try await client.postMultipart(
@@ -283,6 +318,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
     // MARK: - Audio Format Conversion
 
     private func createWAVFile(from pcm16Data: Data) throws -> Data {
+
         // WAV header for PCM16, 16kHz, mono
         let sampleRate: UInt32 = 16000
         let numChannels: UInt16 = 1
@@ -318,6 +354,22 @@ final class GroqStreamingProvider: TranscriptionProvider {
 
         return wavData
     }
+
+    // Optional local post-processing to make streaming output raw for LLM formatting
+    private func postprocessLocalIfRequested(_ s: String) -> String {
+        var t = s
+        let strip = UserDefaults.standard.bool(forKey: "groq.stream.stripPunctuationLocal")
+        let lower = UserDefaults.standard.bool(forKey: "groq.stream.lowercaseLocal")
+        if strip {
+            let set = CharacterSet.punctuationCharacters.union(.symbols)
+            t = t.components(separatedBy: set).joined(separator: " ")
+        }
+        if lower { t = t.lowercased() }
+        // Collapse whitespace
+        t = t.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return t.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
 }
 
 // MARK: - Response Structure
@@ -333,9 +385,20 @@ private actor GroqTranscriptAccumulator {
     private var finalChunkNumber: Int?
     private let client: GroqHTTPClient
 
+
     init(client: GroqHTTPClient) {
         self.client = client
     }
+
+    /// Return trailing combined text (up to maxChars) to use as a prompt for the next chunk
+    func tailPrompt(maxChars: Int) -> String {
+        let sorted = chunkResults.keys.sorted()
+        let texts = sorted.compactMap { chunkResults[$0] }
+        let combined = texts.joined(separator: " ")
+        if combined.count <= maxChars { return combined }
+        return String(combined.suffix(maxChars))
+    }
+
 
     func addChunkResult(chunkNumber: Int, transcript: String, isFinal: Bool) {
         chunkResults[chunkNumber] = transcript
@@ -347,12 +410,39 @@ private actor GroqTranscriptAccumulator {
     }
 
     func getFinalTranscript() -> String {
-        // Sort chunks by number and concatenate
-        let sortedChunks = chunkResults.keys.sorted()
-        let texts = sortedChunks.compactMap { chunkResults[$0] }
-        let combined = texts.joined(separator: " ")
-
-        AppLog.dictation.log("GroqStreaming: Assembled transcript from \(sortedChunks.count) chunks")
+        // Overlap-aware merge: reduce duplicate boundary words
+        let sorted = chunkResults.keys.sorted()
+        var combined = ""
+        var prevTokens: [String] = []
+        func tokens(_ s: String) -> [String] {
+            s.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }
+        }
+        for key in sorted {
+            guard var next = chunkResults[key] else { continue }
+            if combined.isEmpty {
+                combined = next
+                prevTokens = tokens(combined)
+                continue
+            }
+            let nextTokens = tokens(next)
+            var drop = 0
+            let maxK = min(8, prevTokens.count, nextTokens.count)
+            if maxK >= 3 {
+                for m in stride(from: maxK, through: 3, by: -1) {
+                    if Array(prevTokens.suffix(m)) == Array(nextTokens.prefix(m)) {
+                        drop = m
+                        break
+                    }
+                }
+            }
+            if drop > 0 {
+                let words = next.split(whereSeparator: { $0.isWhitespace })
+                next = words.count > drop ? words.dropFirst(drop).joined(separator: " ") : ""
+            }
+            combined = combined.isEmpty ? next : (next.isEmpty ? combined : combined + " " + next)
+            prevTokens = tokens(combined)
+        }
+        AppLog.dictation.log("GroqStreaming: Assembled transcript from \(sorted.count) chunks")
         return combined.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
