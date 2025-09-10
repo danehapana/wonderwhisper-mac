@@ -13,6 +13,9 @@ final class GroqLLMProvider: LLMProvider {
         let messages: [Message]
         let temperature: Double
         let stream: Bool?
+        // Groq OSS reasoning controls (conditionally included for GPT-OSS models)
+        let reasoning_effort: String?
+        let include_reasoning: Bool?
     }
 
     struct ChatResponse: Decodable {
@@ -36,7 +39,15 @@ final class GroqLLMProvider: LLMProvider {
             typedMessages.append(.init(role: "user", content: userPrompt))
         }
 
-        let req = ChatRequest(model: settings.model, messages: typedMessages, temperature: 0.2, stream: settings.streaming ? true : nil)
+        let isGptOss = settings.model.contains("gpt-oss")
+        let req = ChatRequest(
+            model: settings.model,
+            messages: typedMessages,
+            temperature: 0.2,
+            stream: settings.streaming ? true : nil,
+            reasoning_effort: isGptOss ? "low" : nil,
+            include_reasoning: isGptOss ? false : nil
+        )
         if settings.streaming {
             // Use streaming to reduce time-to-first-token; aggregate full content before returning
             let aggregated = try await client.postJSONEncodableStream(to: settings.endpoint, body: req, timeout: settings.timeout)

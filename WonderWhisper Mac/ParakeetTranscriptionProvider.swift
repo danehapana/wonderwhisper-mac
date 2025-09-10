@@ -12,6 +12,8 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
     // Idle unload after inactivity to balance memory and reliability
     private var idleUnloadTask: Task<Void, Never>?
     private let idleSeconds: TimeInterval = 600 // 10 minutes
+    // Coalesce model loading to avoid duplicate work/logs
+    private var loadTask: Task<Void, Error>?
 
     init(modelsDirectory: URL? = nil) {
         if let dir = modelsDirectory {
@@ -52,6 +54,16 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
 
     private func ensureModelsLoaded() async throws {
         if asrManager != nil { return }
+        if let t = loadTask { try await t.value; return }
+        loadTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.loadTask = nil }
+            try await self.performModelLoad()
+        }
+        try await loadTask?.value
+    }
+
+    private func performModelLoad() async throws {
         try? FileManager.default.createDirectory(at: modelsDirectory, withIntermediateDirectories: true)
         // If models exist in a different known location, prefer that
         let discovered = ParakeetManager.effectiveModelsDirectory
@@ -102,18 +114,25 @@ final class ParakeetTranscriptionProvider: TranscriptionProvider {
             return cached
         }
         var samples: [Float]
-        do {
-            samples = try Self.decodeAudioToFloatMono16k(url: fileURL)
-        } catch {
-            let ns = error as NSError
-            AppLog.dictation.error("[Parakeet] AVAudioFile decode failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
-            // Fallback: try AVAssetReader-based decode
-            if let alt = try? Self.decodeWithAssetReader(url: fileURL) {
-                AppLog.dictation.log("[Parakeet] Fallback decode via AVAssetReader succeeded: samples=\(alt.count)")
-                samples = alt
-            } else {
-                AppLog.dictation.error("[Parakeet] Fallback decode via AVAssetReader failed")
-                throw error
+        let ext = fileURL.pathExtension.lowercased()
+        if ["m4a","mp4","aac","alac","mov","m4b","m4p"].contains(ext),
+           let alt = try? Self.decodeWithAssetReader(url: fileURL) {
+            AppLog.dictation.log("[Parakeet] Preferred AVAssetReader path for compressed input: samples=\(alt.count)")
+            samples = alt
+        } else {
+            do {
+                samples = try Self.decodeAudioToFloatMono16k(url: fileURL)
+            } catch {
+                let ns = error as NSError
+                AppLog.dictation.error("[Parakeet] AVAudioFile decode failed domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo)")
+                // Fallback: try AVAssetReader-based decode
+                if let alt = try? Self.decodeWithAssetReader(url: fileURL) {
+                    AppLog.dictation.log("[Parakeet] Fallback decode via AVAssetReader succeeded: samples=\(alt.count)")
+                    samples = alt
+                } else {
+                    AppLog.dictation.error("[Parakeet] Fallback decode via AVAssetReader failed")
+                    throw error
+                }
             }
         }
         // Front-end conditioning (configurable via UserDefaults)
