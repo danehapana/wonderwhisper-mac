@@ -79,23 +79,31 @@ final class GroqTranscriptionProvider: TranscriptionProvider {
         // Many OpenAI-compatible transcription endpoints return {"text": "..."}
         if let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
            let text = json["text"] as? String {
+            let filtered = stripGroqThankYouSuffix(text)
             if let key = cacheKey {
-                TranscriptionCache.shared.store(key, result: text)
+                TranscriptionCache.shared.store(key, result: filtered)
             }
-            return text
+            return filtered
         }
         
         // Try strict decoding fallback with a shared decoder
         if let decoded = try? Self.sharedDecoder.decode(Response.self, from: responseData), let t = decoded.text {
+            let filtered = stripGroqThankYouSuffix(t)
             if let key = cacheKey {
-                TranscriptionCache.shared.store(key, result: t)
+                TranscriptionCache.shared.store(key, result: filtered)
             }
-            return t
+            return filtered
         }
         
         throw ProviderError.decodingFailed
     }
-    
+
+    // Groq hallucination filter: strip exact trailing "Thank you." if present
+    private func stripGroqThankYouSuffix(_ s: String) -> String {
+        if s.hasSuffix("Thank you.") { return String(s.dropLast(10)) }
+        return s
+    }
+
     private func mimeType(for fileExtension: String) -> String {
         switch fileExtension {
         case "wav": return "audio/wav"

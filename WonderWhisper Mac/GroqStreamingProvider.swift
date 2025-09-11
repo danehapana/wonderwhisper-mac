@@ -193,6 +193,7 @@ final class GroqStreamingProvider: TranscriptionProvider {
                 let maxPromptChars = promptChars > 0 ? max(40, min(400, promptChars)) : 120
                 let prompt = await acc.tailPrompt(maxChars: maxPromptChars)
                 var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
+                transcript = stripGroqThankYouSuffix(transcript)
                 transcript = postprocessLocalIfRequested(transcript)
                 await acc.addChunkResult(chunkNumber: remainder.number, transcript: transcript, isFinal: true)
             } catch {
@@ -249,11 +250,13 @@ final class GroqStreamingProvider: TranscriptionProvider {
                     timeout: 30
                 )
                 var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: fallbackSettings, prompt: prompt)
+                transcript = stripGroqThankYouSuffix(transcript)
                 transcript = postprocessLocalIfRequested(transcript)
                 await acc.addChunkResult(chunkNumber: chunkNumber, transcript: transcript, isFinal: isFinal)
                 return
             }
             var transcript = try await uploadChunkToGroq(wavData: wavData, filename: filename, settings: settings, prompt: prompt)
+            transcript = stripGroqThankYouSuffix(transcript)
             transcript = postprocessLocalIfRequested(transcript)
 
             // Add to accumulator
@@ -353,6 +356,12 @@ final class GroqStreamingProvider: TranscriptionProvider {
         wavData.append(pcm16Data)
 
         return wavData
+    }
+
+    // Groq hallucination filter: strip exact trailing "Thank you." if present
+    private func stripGroqThankYouSuffix(_ s: String) -> String {
+        if s.hasSuffix("Thank you.") { return String(s.dropLast(10)) }
+        return s
     }
 
     // Optional local post-processing to make streaming output raw for LLM formatting
